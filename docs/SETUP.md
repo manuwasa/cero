@@ -33,25 +33,97 @@ cd cero
 ```
 
 We use [`uv`](https://github.com/astral-sh/uv) for dependency management. It
-creates a `.venv` automatically and is much faster than pip:
+creates a `.venv` automatically and is much faster than pip.
+
+### Install uv
+
+Pick **one** of these. The official installer is cleanest because it
+handles PATH for you; `pip install` is fine but you may need to fix PATH
+manually after.
+
+**Option A — official installer (recommended):**
+
+```powershell
+powershell -c "irm https://astral.sh/uv/install.ps1 | iex"
+```
+
+Installs to `%USERPROFILE%\.local\bin` and adds it to PATH automatically.
+**Close and reopen PowerShell** before continuing.
+
+**Option B — pip:**
 
 ```powershell
 pip install --user uv
-uv sync                  # creates .venv and installs everything from pyproject.toml
 ```
 
-If `uv` isn't on your PATH after install, add `%APPDATA%\Python\Python3xx\Scripts`
-to your PATH or call it with its full path:
+Installs to `%APPDATA%\Python\Python3xx\Scripts`, which Windows doesn't add
+to PATH by default. See [Fixing PATH](#fixing-uv-on-path) below if `uv` isn't
+found after install.
+
+### Verify uv works
 
 ```powershell
-C:\Users\<you>\AppData\Roaming\Python\Python3xx\Scripts\uv.exe sync
+uv --version
 ```
 
-Verify the install:
+Should print something like `uv 0.11.16`. If you get
+`'uv' is not recognized as the name of a cmdlet, function, script file...`,
+PATH isn't set up — jump to [Fixing PATH](#fixing-uv-on-path).
+
+### Install Cero's dependencies
+
+```powershell
+uv sync
+```
+
+Creates `.venv\` and installs everything from `pyproject.toml`. Takes a
+minute the first time, instant after.
+
+### Verify the install
 
 ```powershell
 uv run python -c "from cero.config import load_config; print('OK')"
 ```
+
+### Fixing uv on PATH
+
+If `uv` isn't recognized after `pip install --user uv`, you have three
+options:
+
+**Quickest — just this terminal session:**
+
+```powershell
+$env:Path = "C:\Users\<you>\AppData\Roaming\Python\Python3xx\Scripts;$env:Path"
+```
+
+Replace `<you>` with your Windows username and `Python3xx` with your version
+(e.g. `Python314`). Works until you close the window.
+
+**Permanent — add to your user PATH** (no admin needed, one-time fix):
+
+```powershell
+[Environment]::SetEnvironmentVariable(
+  "Path",
+  "C:\Users\<you>\AppData\Roaming\Python\Python3xx\Scripts;" + [Environment]::GetEnvironmentVariable("Path", "User"),
+  "User"
+)
+```
+
+Close and reopen PowerShell. `uv` will work from any terminal forever after.
+
+**Bypass — use the full path each time:**
+
+```powershell
+C:\Users\<you>\AppData\Roaming\Python\Python3xx\Scripts\uv.exe sync
+C:\Users\<you>\AppData\Roaming\Python\Python3xx\Scripts\uv.exe run python -m cero
+```
+
+Verbose but works without touching PATH. Useful if you can't change system
+settings.
+
+> **Tip**: the official installer (Option A above) avoids this entire mess.
+> If you went the pip route and PATH is a hassle, you can uninstall (`pip
+> uninstall uv`) and reinstall via the official installer.
 
 ---
 
@@ -232,6 +304,9 @@ will fail load if they don't. See `docs/CRITERIA.md` for what each does.
 uv run python -m cero
 ```
 
+If you get `'uv' is not recognized as the name of a cmdlet...`, PATH isn't
+set up. See [Fixing uv on PATH](#fixing-uv-on-path) in step 2.
+
 You should see:
 
 ```
@@ -270,6 +345,13 @@ Press **Ctrl+C** to shut down. The shutdown logs a clean stop sequence.
 ---
 
 ## Troubleshooting
+
+### `'uv' is not recognized as the name of a cmdlet, function, script file...`
+
+PowerShell can't find `uv` because the install location isn't on PATH. This
+is the most common first-time error. See
+[Fixing uv on PATH](#fixing-uv-on-path) in step 2 for three fixes (quick
+one-shot, permanent, or full-path bypass).
 
 ### `Could not contact DNS servers`
 

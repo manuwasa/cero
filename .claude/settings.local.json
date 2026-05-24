@@ -1,0 +1,13 @@
+{
+  "permissions": {
+    "allow": [
+      "PowerShell($env:Path = \"C:\\\\Users\\\\mekan\\\\AppData\\\\Roaming\\\\Python\\\\Python314\\\\Scripts;$env:Path\"; uv sync 2>&1 | Select-Object -Last 20)",
+      "PowerShell($env:Path = \"C:\\\\Users\\\\mekan\\\\AppData\\\\Roaming\\\\Python\\\\Python314\\\\Scripts;$env:Path\"; uv run python -m cero.config 2>&1)",
+      "PowerShell($env:Path = \"C:\\\\Users\\\\mekan\\\\AppData\\\\Roaming\\\\Python\\\\Python314\\\\Scripts;$env:Path\"; uv run python scripts/smoke_db.py 2>&1)",
+      "PowerShell($env:Path = \"C:\\\\Users\\\\mekan\\\\AppData\\\\Roaming\\\\Python\\\\Python314\\\\Scripts;$env:Path\"; uv run python -c \"from cero.config import load_config; _, s = load_config\\(\\); print\\('key:', repr\\(s.exchange_api_key[:6] + '...' + s.exchange_api_key[-3:]\\)\\); print\\('secret_len:', len\\(s.exchange_api_secret\\)\\); print\\('passphrase:', repr\\(s.exchange_passphrase\\)\\)\" 2>&1)",
+      "PowerShell($env:Path = \"C:\\\\Users\\\\mekan\\\\AppData\\\\Roaming\\\\Python\\\\Python314\\\\Scripts;$env:Path\"; uv run python -c \"import ccxt, ccxt.async_support as a; print\\('ccxt', ccxt.__version__\\); print\\('has bybit:', hasattr\\(a, 'bybit'\\)\\); print\\('pro has bybit:', hasattr\\(__import__\\('ccxt.pro', fromlist=['bybit']\\), 'bybit'\\)\\)\" 2>&1)",
+      "PowerShell($env:Path = \"C:\\\\Users\\\\mekan\\\\AppData\\\\Roaming\\\\Python\\\\Python314\\\\Scripts;$env:Path\"; uv run python scripts/smoke_exchange.py 2>&1)",
+      "PowerShell($env:Path = \"C:\\\\Users\\\\mekan\\\\AppData\\\\Roaming\\\\Python\\\\Python314\\\\Scripts;$env:Path\"; uv run python scripts/smoke_exchange.py 2>&1 | Out-File -FilePath smoke.log -Encoding utf8; Get-Content smoke.log -Raw)"
+    ]
+  }
+}

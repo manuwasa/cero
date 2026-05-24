@@ -1,0 +1,185 @@
+# Cero — strategy & runtime config
+# Secrets live in .env, NOT here.
+
+# ──────────────────────────────────────────────────────────────────────
+# EXCHANGE
+# ──────────────────────────────────────────────────────────────────────
+exchange:
+  # ccxt exchange id. Common options:
+  #   - okx        (rich data, OKX symbols use BTC-USDT-SWAP format)
+  #   - bybit      (simple, widely used)
+  #   - binance    (largest, but US/SG restrictions)
+  #   - hyperliquid (on-chain perps)
+  name: bybit
+
+  # Use testnet first. Set to false only when you're certain.
+  testnet: true
+
+  # Margin mode for perps. Options: isolated | cross
+  # isolated: per-position margin; safer per-trade
+  # cross:    shared margin pool; lower margin requirement, higher blow-up risk
+  margin_mode: isolated
+
+  # Default leverage. Keep LOW while learning.
+  # 1x  = no leverage, like spot
+  # 2x  = 2% move wipes margin only if you use full margin
+  # 10x = a 10% adverse move liquidates you
+  # Cero's risk math is BASED ON STOP LOSS DISTANCE, not leverage.
+  # Leverage here just determines max position size. Use 5x as default ceiling.
+  leverage: 5
+
+# ──────────────────────────────────────────────────────────────────────
+# SYMBOLS — what to watch and trade
+# ──────────────────────────────────────────────────────────────────────
+# Use ccxt unified format: BASE/QUOTE:SETTLEMENT
+# Examples:
+#   BTC/USDT:USDT  — BTC perp settled in USDT
+#   ETH/USDT:USDT  — ETH perp
+#   SOL/USDT:USDT  — SOL perp
+symbols:
+  - BTC/USDT:USDT
+  - ETH/USDT:USDT
+  - SOL/USDT:USDT
+
+# Timeframes the price worker subscribes to per symbol.
+# Used by docs/CRITERIA.md criteria:
+#   1h, 4h  → criterion 1 (HTF trend), 2 (structure), 8 (ATR room)
+#   15m, 30m → criterion 6 (LTF structure alignment)
+#   5m, 15m  → criterion 7 (LTF POI)
+#   1d       → daily high/low context for criteria 3, 8
+# Bandwidth scales with len(symbols) × len(timeframes) WebSocket subscriptions.
+timeframes:
+  - 5m
+  - 15m
+  - 30m
+  - 1h
+  - 4h
+  - 1d
+
+# How many historical bars to backfill per (symbol, timeframe) on startup
+# via REST before the live WebSocket stream takes over. The brain needs ~200
+# for 50-EMA + ATR(14) + swing structure; 300 gives headroom.
+backfill_candles: 300
+
+# ──────────────────────────────────────────────────────────────────────
+# EXECUTION MODE
+# ──────────────────────────────────────────────────────────────────────
+# signal_only — Cero alerts you; you trade manually  ← START HERE
+# approval    — Cero asks for ✅/❌ before each trade
+# auto        — Cero trades autonomously within risk limits
+#
+# DO NOT set this to "auto" until you have passed the validation gate.
+# See docs/VALIDATION.md.
+mode: signal_only
+
+# ──────────────────────────────────────────────────────────────────────
+# RISK MANAGEMENT
+# ──────────────────────────────────────────────────────────────────────
+risk:
+  # Base risk per trade as % of equity
+  # 1.0  = standard
+  # 0.5  = conservative (recommended while learning)
+  # 2.0+ = aggressive (don't, until you have 500+ validated trades)
+  base_risk_per_trade_pct: 0.5
+
+  # Daily loss cap. When today's losses exceed this %, TRIP fires.
+  max_daily_loss_pct: 3.0
+
+  # Stop trading after N consecutive losses.
+  max_consecutive_losses: 4
+
+  # Max simultaneous open positions across all symbols.
+  max_concurrent_positions: 3
+
+  # Tier → sizing modifier. Multiplied with base_risk_per_trade_pct.
+  tier_sizing:
+    A: 1.0    # full risk
+    B: 0.5    # half risk
+    C: 0.0    # no trade
+    D: 0.0    # no trade
+
+  # Tier thresholds (score boundaries)
+  tier_thresholds:
+    A: 80     # score >= 80 → A
+    B: 60     # score >= 60 → B
+    C: 40     # score >= 40 → C (no trade)
+    # else D (no trade)
+
+# ──────────────────────────────────────────────────────────────────────
+# CRITERIA WEIGHTS
+# ──────────────────────────────────────────────────────────────────────
+# Must sum to 100. See docs/CRITERIA.md for what each means.
+criteria_weights:
+  trend_h1_h4:        20
+  market_structure:   18
+  key_levels:         10
+  poi_alert:          15
+  session_hl:          5
+  structure_15m_30m:  12
+  ltf_poi:            12
+  atr_room:            8
+
+# ──────────────────────────────────────────────────────────────────────
+# NEWS / EVENT BLACKOUT
+# ──────────────────────────────────────────────────────────────────────
+news:
+  # Block trading around high-impact news (CPI, FOMC, NFP, etc.)
+  blackout_minutes_before: 15
+  blackout_minutes_after: 15
+
+  # Which impact levels to blackout for. Options: low, medium, high
+  blackout_impacts:
+    - high
+    - medium
+
+  # Calendar sources. Free options only by default.
+  sources:
+    - forexfactory     # scraped, free
+    # - tradingeconomics  # paid API
+
+  # Twitter accounts to monitor for breaking news (handled separately)
+  twitter_watchlist:
+    - WuBlockchain
+    - Cointelegraph
+    - DocumentingBTC
+  # Tweets here do NOT auto-trigger blackout; they're shown for context.
+
+# ──────────────────────────────────────────────────────────────────────
+# ALERTING (Telegram)
+# ──────────────────────────────────────────────────────────────────────
+alerts:
+  # Send a push alert when a symbol crosses this tier upward
+  push_readiness_above_tier: B
+
+  # When to alert
+  on_signal: true       # new signal emitted
+  on_fill: true         # order filled
+  on_close: true        # position closed
+  on_trip: true         # TRIP fired
+  on_news_blackout: true # blackout starting/ending
+
+# ──────────────────────────────────────────────────────────────────────
+# WEB DASHBOARD
+# ──────────────────────────────────────────────────────────────────────
+web:
+  host: 127.0.0.1   # localhost only; use 0.0.0.0 ONLY behind a firewall/VPN
+  port: 8765
+
+# ──────────────────────────────────────────────────────────────────────
+# DATABASE
+# ──────────────────────────────────────────────────────────────────────
+# SQLite is the single source of truth for candles, trades, signals, etc.
+# Path is relative to the project root. The parent directory is created
+# automatically if missing.
+database:
+  path: data/cero.db
+  echo: false        # set true to log every SQL statement (very verbose)
+
+# ──────────────────────────────────────────────────────────────────────
+# LOGGING
+# ──────────────────────────────────────────────────────────────────────
+logging:
+  level: INFO       # DEBUG | INFO | WARNING | ERROR
+  file: logs/cero.log
+  rotate_mb: 50
+  keep_files: 5

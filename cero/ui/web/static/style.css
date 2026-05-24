@@ -1,0 +1,21 @@
+/* TODO (Claude Code): style the dashboard.
+   Reference aesthetic (from Elysia screenshots):
+   - Dark background (#0a0a0f or similar)
+   - Pink/magenta accent (#ff6b9d)
+   - Monospace fonts for numbers
+   - Compact, info-dense layout
+*/
+:root {
+  --bg: #0a0a0f;
+  --fg: #e0e0e0;
+  --accent: #ff6b9d;
+  --green: #4ade80;
+  --red: #f87171;
+  --mono: ui-monospace, "JetBrains Mono", Menlo, Consolas, monospace;
+}
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--fg);
+  font-family: var(--mono);
+}

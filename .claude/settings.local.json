@@ -13,7 +13,11 @@
       "Bash(curl -s -o /dev/null -w \"HTTP %{http_code}\\\\n\" \"http://127.0.0.1:8765/static/index.html\")",
       "Bash(curl -s -o /dev/null -w \"HTTP %{http_code}\\\\n\" \"http://127.0.0.1:8765/static/app.js\")",
       "Bash(curl -s \"http://127.0.0.1:8765/api/news?limit=3\")",
-      "Bash(curl -s \"http://127.0.0.1:8765/api/account/history?hours=24&max_points=10\")"
+      "Bash(curl -s \"http://127.0.0.1:8765/api/account/history?hours=24&max_points=10\")",
+      "Bash(curl -s -w \"\\\\nstatus: %{http_code}  time: %{time_total}s\\\\n\" --max-time 15 \"https://api-testnet.bybit.com/v5/market/instruments-info?category=linear&limit=10\")",
+      "Bash(curl -s -w \"status: %{http_code}  time: %{time_total}s\\\\n\" --max-time 10 \"https://api-testnet.bybit.com/v5/market/time\")",
+      "Bash(curl -s -w \"status: %{http_code}  time: %{time_total}s\\\\n\" --max-time 10 \"https://api.bybit.com/v5/market/time\")",
+      "Bash(curl -s -o /dev/null -w \"google: %{http_code}  time: %{time_total}s\\\\n\" --max-time 5 \"https://www.google.com\")"
     ]
   }
 }

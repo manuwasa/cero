@@ -47,10 +47,16 @@ from cero.events import EventBus, bus as default_bus
 from cero.exec.modes import ExecutionMode
 
 
+# Round-number step per symbol, used by criterion 3 (key_levels) to seed
+# candidate horizontal levels around current price. Values sized at roughly
+# 0.5% of typical price and snapped to a clean 1/2/5 x 10^N multiple. See
+# scripts/suggest_round_step.py to compute these systematically and
+# docs/USAGE.md ("Adding a symbol") for how to extend.
 _ROUND_STEPS: dict[str, float] = {
-    "BTC/USDT:USDT": 1000.0,
-    "ETH/USDT:USDT": 100.0,
-    "SOL/USDT:USDT": 10.0,
+    "BTC/USDT:USDT": 500.0,
+    "ETH/USDT:USDT": 10.0,
+    "SOL/USDT:USDT": 0.5,
+    "BNB/USDT:USDT": 2,
 }
 
 

@@ -353,6 +353,35 @@ is the most common first-time error. See
 [Fixing uv on PATH](#fixing-uv-on-path) in step 2 for three fixes (quick
 one-shot, permanent, or full-path bypass).
 
+### Cero tripped on its own trade (`unexpected_position` with `exch_id=None`)
+
+If you see a TRIP fire with a detail like
+`unexpected position BTC/USDT:USDT short size=-0.021 (exch_id=None)` right
+after Cero placed an order itself: this **was** a real bug — `orders.py`
+wrote the order id into `exchange_position_id`, but bybit's
+`fetch_positions` returns `None` for that field. The `account_worker`
+reconciliation then saw the same position as "new" on the next poll and
+tripped. **Fixed** in [cero/exec/orders.py](../cero/exec/orders.py#L209).
+Pull the latest code. See `docs/USAGE.md` for full recovery steps.
+
+### `bybit GET .../instruments-info?category=option&baseCoin=...` failing
+
+By default ccxt's bybit `load_markets` fetches spot + linear + inverse +
+**option** market metadata. Options endpoints on bybit testnet are flaky
+and often time out, which makes the whole boot fail with a retry loop.
+Cero limits `fetchMarkets` to `["linear"]` (USDT perps, all we trade) so
+this no longer happens. If you see it on a fresh checkout, pull the latest.
+
+### `429 Too Many Requests` from FairEconomy (`nfs.faireconomy.media`)
+
+The calendar feed throttles aggressive polling. If you restart Cero many
+times in an hour during development, the boot-time fetch hits the limit.
+Cero now skips the initial fetch on boot if it already has data younger
+than 30 minutes (see `min_refresh_gap_seconds` in
+[cero/data/calendar_worker.py](../cero/data/calendar_worker.py)). If you
+hit a 429 anyway, the worker backs off (30→60→90→120s → cap at 15 min)
+and keeps the rest of Cero running. Wait an hour and it self-recovers.
+
 ### `Could not contact DNS servers`
 
 `aiodns` (a ccxt + aiogram dependency) sometimes can't auto-detect DNS

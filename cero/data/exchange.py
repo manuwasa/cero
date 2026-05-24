@@ -228,6 +228,12 @@ class ExchangeClient:
         # then makes only the public fetchMarkets call.
         if self.exch_cfg.name == "bybit":
             self._ccxt.has["fetchCurrencies"] = False
+            # By default, bybit's fetch_markets pulls four categories: spot,
+            # linear (USDT perps), inverse, and option. Options endpoints on
+            # testnet are flaky and we only trade linear, so limit to that —
+            # cuts boot time and stops `load_markets` from retrying for
+            # 30 seconds when an unrelated category times out.
+            self._ccxt.options["fetchMarkets"] = ["linear"]
 
         self._markets_loaded = False
         self._log = logger.bind(exchange=self.exch_cfg.name, testnet=self.exch_cfg.testnet)

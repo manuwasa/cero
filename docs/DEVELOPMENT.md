@@ -354,6 +354,38 @@ the pattern.
   client-side.
 - `create_order` response is sparse (only `id` + `clientOrderId`).
   `_order_from_ccxt` takes fallback `side`/`type`/`amount` from the request.
+- **`fetch_positions` returns `exchange_position_id = None` for USDT
+  perps.** The order id from `create_order` is NOT the position id. If you
+  write `order.id` into `Position.exchange_position_id`, the next
+  `account_worker` reconciliation will see the position as "new" (because
+  its keys are different) and trip on Cero's own freshly-placed trade.
+  Always set `exchange_position_id = None` on bybit; use `signal_id` as the
+  FK link back to the originating Signal. See
+  [cero/exec/orders.py](../cero/exec/orders.py#L209) for the comment.
+- **`load_markets` fetches spot + linear + inverse + option** by default.
+  On testnet, the options endpoints are flaky and a single timeout kills
+  the whole boot. We limit to `["linear"]` via
+  `options["fetchMarkets"] = ["linear"]`. If you add a non-bybit exchange,
+  decide whether that exchange has similar quirks.
+- **One-way mode only.** The `symbol:side` fallback key the reconciler
+  uses assumes one position per `(symbol, side)`. If you enable hedge mode
+  (long + short on the same symbol simultaneously), the keying collides
+  and you'll need a proper position-id field from the exchange. Cero is
+  not currently set up for hedge mode.
+
+### External feeds — don't hammer them on restart
+
+The calendar (FairEconomy) and news (RSS) feeds throttle aggressive
+polling. The `CalendarWorker` has a `min_refresh_gap_seconds` knob
+(default 30 min) that skips the initial fetch on boot if the DB already
+has data younger than the gap. This prevents rapid dev-loop restarts from
+getting your IP rate-limited (429).
+
+When adding a new external-feed worker, apply the same pattern:
+1. Cache last-fetched timestamp in the DB.
+2. On boot, skip the fetch if the cache is fresh.
+3. Back off exponentially on failures (cap at 10–15 minutes).
+4. Never let one feed's failure block other workers.
 
 ### SQLite + asyncio
 

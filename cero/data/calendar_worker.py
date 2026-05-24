@@ -57,11 +57,13 @@ class CalendarWorker:
         *,
         feed_url: str = DEFAULT_FEED_URL,
         refresh_seconds: int = 3600,
+        min_refresh_gap_seconds: int = 1800,   # 30 minutes
         fetcher: Optional[Fetcher] = None,
     ) -> None:
         self.cfg = cfg
         self.feed_url = feed_url
         self.refresh_seconds = refresh_seconds
+        self.min_refresh_gap_seconds = min_refresh_gap_seconds
         self.fetcher = fetcher or _http_fetcher
         self._task: Optional[asyncio.Task[None]] = None
         self._stop = asyncio.Event()
@@ -89,6 +91,20 @@ class CalendarWorker:
     # ── loop ──────────────────────────────────────────────────────────
 
     async def _loop(self) -> None:
+        # If the DB already has data fetched within `min_refresh_gap_seconds`,
+        # skip the initial refresh — this stops rapid Cero restarts from
+        # hammering the feed and getting us rate-limited (429s).
+        if await self._has_recent_data():
+            self._log.info(
+                "calendar already fresh — skipping initial fetch, "
+                "next refresh in {}s",
+                self.refresh_seconds,
+            )
+            try:
+                await asyncio.wait_for(self._stop.wait(), timeout=self.refresh_seconds)
+            except asyncio.TimeoutError:
+                pass
+
         attempt = 0
         while not self._stop.is_set():
             try:
@@ -156,6 +172,23 @@ class CalendarWorker:
                 )
                 await s.execute(stmt)
             await s.commit()
+
+    async def _has_recent_data(self) -> bool:
+        """True if any CalendarEvent row was fetched within
+        `min_refresh_gap_seconds` of now. Used to skip the initial fetch on
+        rapid restarts (avoids 429s from the feed)."""
+        from datetime import datetime, timedelta, timezone
+
+        cutoff = datetime.now(timezone.utc) - timedelta(seconds=self.min_refresh_gap_seconds)
+        async with session_factory()() as s:
+            row = (
+                await s.execute(
+                    select(CalendarEvent.fetched_at)
+                    .where(CalendarEvent.fetched_at >= cutoff)
+                    .limit(1)
+                )
+            ).first()
+        return row is not None
 
 
 # ──────────────────────────────────────────────────────────────────────

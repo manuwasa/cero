@@ -196,6 +196,191 @@ safe to resume.
 
 ---
 
+## Adding a symbol
+
+Three steps, plus two helper scripts to find the right values.
+
+### 1. Find a valid symbol on your exchange
+
+Not every coin on bybit mainnet is on testnet — testnet has a smaller list.
+Use the helper to search:
+
+```powershell
+uv run python scripts/list_symbols.py --grep DOGE
+```
+
+Outputs the matching ccxt-unified format symbols. For bybit USDT-margined
+perps the format is always `BASE/USDT:USDT`, e.g. `DOGE/USDT:USDT`. If
+`--grep <coin>` returns nothing, that coin isn't traded on the configured
+exchange — pick a different symbol or switch exchange.
+
+Other ways to confirm a symbol exists:
+- Bybit web UI: https://testnet.bybit.com/trade/usdt/BTCUSDT (browse the
+  symbol picker). The URL slug tells you the underlying name.
+- `https://api-testnet.bybit.com/v5/market/instruments-info?category=linear`
+  returns the full JSON listing.
+
+### 2. Find the round-number step
+
+Criterion 3 needs to know what counts as a "psychological round price"
+for that asset. The helper computes it from the current price:
+
+```powershell
+uv run python scripts/suggest_round_step.py DOGE/USDT:USDT
+```
+
+Output is a ready-to-paste dict snippet for `_ROUND_STEPS` in
+[cero/brain/scheduler.py](../cero/brain/scheduler.py). Example:
+
+```
+symbol                      price     step (~0.5%)
+BTC/USDT:USDT             71647.1              500
+DOGE/USDT:USDT            0.05975           0.0002
+```
+
+The step is sized at ~0.5% of price and snapped to a clean
+`1 / 2 / 5 × 10^N` value — that's where humans cluster round-number levels.
+
+If you skip this and don't add an entry, the symbol falls back to `1000.0`,
+which is correct for BTC and meaningless for anything else (criterion 3
+will always fail).
+
+### 3. Wire it up
+
+Edit [config.yaml](../config.yaml):
+
+```yaml
+symbols:
+  - BTC/USDT:USDT
+  - ETH/USDT:USDT
+  - SOL/USDT:USDT
+  - DOGE/USDT:USDT     # new
+```
+
+Edit `_ROUND_STEPS` in [cero/brain/scheduler.py](../cero/brain/scheduler.py):
+
+```python
+_ROUND_STEPS: dict[str, float] = {
+    "BTC/USDT:USDT": 1000.0,
+    "ETH/USDT:USDT": 100.0,
+    "SOL/USDT:USDT": 10.0,
+    "DOGE/USDT:USDT": 0.0002,   # new (from suggest_round_step.py)
+}
+```
+
+Restart Cero. You'll see the new symbol's 6 timeframes backfill on boot
+(1,800 candles added) and the readiness table on the dashboard grows by
+one row.
+
+### How many positions can Cero hold at once?
+
+`max_concurrent_positions: 3` in `config.yaml` is the cap across **all
+symbols combined**. Each symbol can only hold one position at a time —
+Cero runs in bybit's one-way mode, so you can't be long and short the same
+symbol simultaneously. Sequential trades (close BTC long → open BTC short)
+work fine; parallel trades on different symbols (BTC + ETH + SOL all open)
+also work fine, up to the cap.
+
+Bump the cap if you trade many symbols:
+
+```yaml
+risk:
+  max_concurrent_positions: 6
+```
+
+Higher caps = more parallel risk. Don't go above the number of symbols you
+configured, and don't go above what you can mentally track.
+
+---
+
+## Recovering from a trip
+
+Whether the trip was you (manual `/trip`), an automatic trigger (daily
+loss cap, consecutive losses), or `unexpected_position`, the recovery is
+the same three-step flow.
+
+### 1. Verify exchange state is what you expect
+
+Open the exchange's web UI (e.g. https://testnet.bybit.com → Positions).
+TripWatcher should have closed everything, but trust nothing automatically:
+- **If positions are flat**: continue to step 2.
+- **If a position is still open**: close it manually on the exchange before
+  doing anything else. The DB and the exchange must agree before you reset.
+
+### 2. Clean up stale DB rows (only if needed)
+
+If positions are flat on the exchange but Cero's `positions` table still
+has rows, they're orphans. Inspect:
+
+```powershell
+uv run python -c "
+import asyncio
+from sqlalchemy import select
+from cero.config import load_config
+from cero.db.models import Position
+from cero.db.session import close_db, init_db, session_factory
+
+async def main():
+    cfg, _ = load_config()
+    await init_db(cfg.database)
+    async with session_factory()() as s:
+        rows = (await s.execute(select(Position))).scalars().all()
+        for r in rows:
+            print(f'  id={r.id}  {r.symbol}  {r.side}  size={r.size}')
+        print(f'total: {len(rows)} rows')
+    await close_db()
+
+asyncio.run(main())
+"
+```
+
+If the rows don't match anything live on the exchange, clear them via the
+account_worker on the next boot — it'll detect them as "closed" and delete.
+Or, faster, run the script again with `await s.execute(delete(Position))`.
+
+### 3. Reset the trip
+
+- **In Telegram**: send `/reset` to your bot.
+- **In the dashboard**: click the **Reset** button.
+
+Both update in-memory `RiskGate.tripped` and the DB row in one call.
+
+If neither is available (e.g. Cero crashed), you can clear the DB row only —
+but **remember to restart Cero afterward** so `hydrate()` re-reads the (now
+cleared) state:
+
+```powershell
+uv run python -c "
+import asyncio, time
+from sqlalchemy import update
+from cero.config import load_config
+from cero.db.models import TripEvent
+from cero.db.session import close_db, init_db, session_factory
+
+async def main():
+    cfg, _ = load_config()
+    await init_db(cfg.database)
+    async with session_factory()() as s:
+        result = await s.execute(
+            update(TripEvent).where(TripEvent.cleared_at.is_(None))
+            .values(cleared_at=int(time.time() * 1000), cleared_by='manual')
+        )
+        await s.commit()
+        print(f'cleared {result.rowcount} trip(s)')
+    await close_db()
+
+asyncio.run(main())
+"
+```
+
+### Confirming the gate is clear
+
+After reset, the next signal log line's reason changes from
+`TRIPPED (...)` back to the normal sizing reason
+(`tier sizing is 0 (C or D)`, `ok`, etc.). That's your confirmation.
+
+---
+
 ## Reading the validation gate
 
 Before flipping `mode: auto`, you need to pass all five tests in

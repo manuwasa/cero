@@ -173,6 +173,28 @@ async def test_refresh_writes_then_updates(temp_db):
     assert nfp.actual == "210K"
 
 
+async def test_has_recent_data_true_when_row_just_fetched(temp_db):
+    """The skip-fetch guard should fire when any row was inserted within
+    min_refresh_gap_seconds."""
+    cfg = _cfg(temp_db)
+    from datetime import datetime, timezone
+    async with session_factory()() as s:
+        s.add(CalendarEvent(
+            source="forexfactory", source_id="x1", ts=0,
+            name="recent", country="USD", impact="high",
+            fetched_at=datetime.now(timezone.utc),
+        ))
+        await s.commit()
+    w = CalendarWorker(cfg, fetcher=lambda u: (_ for _ in ()).throw(Exception("should not fetch")))  # type: ignore[arg-type]
+    assert await w._has_recent_data() is True
+
+
+async def test_has_recent_data_false_when_table_empty(temp_db):
+    cfg = _cfg(temp_db)
+    w = CalendarWorker(cfg, fetcher=lambda u: (_ for _ in ()).throw(Exception()))  # type: ignore[arg-type]
+    assert await w._has_recent_data() is False
+
+
 # ──────────────────────────────────────────────────────────────────────
 # current_blackout helper
 # ──────────────────────────────────────────────────────────────────────

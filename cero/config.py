@@ -96,6 +96,11 @@ class AlertsConfig(BaseModel):
 class WebConfig(BaseModel):
     host: str = "127.0.0.1"
     port: int = Field(default=8765, ge=1, le=65535)
+    # Optional HTTP Basic Auth. If both are set, the dashboard + every /api
+    # route requires the prompt. Keep empty when host=127.0.0.1 (localhost
+    # already trusted); REQUIRED when host=0.0.0.0 or any LAN/public binding.
+    auth_user: str = ""
+    auth_pass: str = ""
 
 
 class DatabaseConfig(BaseModel):

@@ -59,6 +59,10 @@ class FakeExchange:
         self.calls_set_margin_mode: list[tuple[str, str]] = []
         self.fetch_positions_result: list[PositionInfo] = []
         self.create_market_order_raises: Exception | None = None
+        # Simulate fetch_order: by default, returns the same amount that was
+        # requested (full fill). Tests can override to simulate partial fills.
+        self.fetch_order_filled_fraction: float = 1.0
+        self.fetch_order_status: str = "closed"
 
     async def create_market_order(
         self, symbol, side, amount, *, reduce_only=False, params=None
@@ -73,6 +77,17 @@ class FakeExchange:
             id=f"order-{len(self.calls_create_market_order):04d}",
             symbol=symbol, side=side, type="market", amount=amount,
             price=None, filled=amount, status="closed", reduce_only=reduce_only,
+        )
+
+    async def fetch_order(self, order_id, symbol):
+        # Return the most recent create_market_order's amount scaled by fill fraction
+        last = self.calls_create_market_order[-1] if self.calls_create_market_order else {}
+        requested = last.get("amount", 0.0)
+        filled = requested * self.fetch_order_filled_fraction
+        return OrderInfo(
+            id=order_id, symbol=symbol, side=last.get("side") or "buy",
+            type="market", amount=requested, price=None, filled=filled,
+            status=self.fetch_order_status,
         )
 
     async def cancel_all_orders(self, symbol):
@@ -125,10 +140,12 @@ def _signal(**over) -> Signal:
 
 async def test_place_happy_path_records_position_and_executes_signal(temp_db):
     ex = FakeExchange()
-    # Persist a Signal row so the FK on Position has something to point at.
+    sig = _signal()
+    # Persist a Signal row with matching (symbol, ts) so orders.py's lookup
+    # finds it and flips executed=True.
     async with session_factory()() as s:
         sig_row = SignalRow(
-            ts=0, symbol="ETH/USDT:USDT", tier="B", direction="long",
+            ts=sig.ts, symbol=sig.symbol, tier="B", direction="long",
             score=72, size_pct=0.5, mode="auto",
         )
         s.add(sig_row)
@@ -136,8 +153,8 @@ async def test_place_happy_path_records_position_and_executes_signal(temp_db):
         await s.refresh(sig_row)
         sig_id = sig_row.id
 
-    placer = CcxtOrderPlacer(ex, signal_id_provider=lambda: sig_id)
-    order_id = await placer.place(_signal())
+    placer = CcxtOrderPlacer(ex)
+    order_id = await placer.place(sig)
 
     assert order_id == "order-0001"
     assert len(ex.calls_create_market_order) == 1
@@ -160,6 +177,49 @@ async def test_place_happy_path_records_position_and_executes_signal(temp_db):
     assert p.size == pytest.approx(0.312)
     assert p.signal_id == sig_id
     assert signal.executed is True
+
+
+async def test_place_records_partial_fill_size(temp_db):
+    """When bybit IOC-cancels part of a market order (thin liquidity), the
+    Position row must reflect the *actual* filled amount, not the requested.
+    Without this, position size diverges from reality immediately."""
+    ex = FakeExchange()
+    ex.fetch_order_filled_fraction = 0.5    # only half filled
+    ex.fetch_order_status = "canceled"      # rest IOC-canceled
+
+    sig = _signal()   # requested 0.3125 ETH → rounds to 0.312 in _prepare
+    async with session_factory()() as s:
+        s.add(SignalRow(
+            ts=sig.ts, symbol=sig.symbol, tier="B", direction="long",
+            score=72, size_pct=0.5, mode="auto",
+        ))
+        await s.commit()
+
+    placer = CcxtOrderPlacer(ex)
+    await placer.place(sig)
+
+    async with session_factory()() as s:
+        p = (await s.execute(select(Position))).scalar_one()
+    # Half of 0.312 = 0.156
+    assert p.size == pytest.approx(0.156)
+
+
+async def test_place_skips_record_when_filled_zero(temp_db):
+    """If the entire order gets canceled (filled=0), no Position row should
+    be written — there's nothing to track."""
+    ex = FakeExchange()
+    ex.fetch_order_filled_fraction = 0.0
+    ex.fetch_order_status = "canceled"
+
+    sig = _signal()
+    placer = CcxtOrderPlacer(ex)
+    result = await placer.place(sig)
+    # Order id still returned (the order DID get submitted to exchange)
+    assert result == "order-0001"
+    # But no Position row written
+    async with session_factory()() as s:
+        positions = (await s.execute(select(Position))).scalars().all()
+    assert positions == []
 
 
 async def test_place_short_uses_sell_side_and_negative_size(temp_db):

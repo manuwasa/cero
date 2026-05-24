@@ -76,7 +76,7 @@ account_poll_seconds: 10
 #
 # DO NOT set this to "auto" until you have passed the validation gate.
 # See docs/VALIDATION.md.
-mode: auto
+mode: signal_only
 
 # ──────────────────────────────────────────────────────────────────────
 # RISK MANAGEMENT
@@ -179,6 +179,10 @@ alerts:
 web:
    host: 127.0.0.1 # localhost only; use 0.0.0.0 ONLY behind a firewall/VPN
    port: 8765
+   # HTTP Basic Auth — REQUIRED if host is anything other than 127.0.0.1.
+   # Leave empty for localhost. Set both when exposing to LAN/cloud:
+   auth_user: ""
+   auth_pass: ""
 
 # ──────────────────────────────────────────────────────────────────────
 # DATABASE

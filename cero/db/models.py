@@ -185,6 +185,13 @@ class Signal(Base):
     score: Mapped[int] = mapped_column(Integer, nullable=False)
     size_pct: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
 
+    # Brain-intended trade levels. The backtester reads these to score
+    # historical signals against actual price action without re-running the
+    # brain. Nullable so older rows (pre-this-migration) still load.
+    entry_price: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    stop_loss: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    take_profit: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+
     mode: Mapped[str] = mapped_column(String(16), nullable=False)
     # 'signal_only' | 'approval' | 'auto'
 

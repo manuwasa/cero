@@ -185,6 +185,68 @@ async def test_position_closure_removes_row(temp_db):
     assert rows == []
 
 
+async def test_position_closure_writes_trade_row(temp_db):
+    """Bug 2 regression: when a position disappears from the exchange, we
+    must create a Trade row so PnL stats include it (otherwise the
+    validation gate never counts any trades)."""
+    from cero.db.models import Trade
+    cfg = _cfg(temp_db)
+    ex = FakeExchange()
+    # Long position at entry 3000, currently marked at 3100 (winning).
+    ex.positions = [PositionInfo(
+        symbol="ETH/USDT:USDT", side="long", size=0.5,
+        entry_price=3000.0, mark_price=3100.0, leverage=5.0,
+        unrealized_pnl=50.0, exchange_position_id=None,
+    )]
+    gate = RiskGate(cfg.risk, cfg.news, event_bus=EventBus())
+    w = AccountWorker(cfg, ex, gate)
+
+    await w._tick()          # import
+    ex.positions = []        # closed externally (SL/TP/manual)
+    await w._tick()          # reconcile detects the closure
+
+    async with session_factory()() as s:
+        trades = (await s.execute(select(Trade))).scalars().all()
+    assert len(trades) == 1
+    t = trades[0]
+    assert t.symbol == "ETH/USDT:USDT"
+    assert t.side == "long"
+    assert t.size == pytest.approx(0.5)
+    assert t.entry_price == pytest.approx(3000.0)
+    assert t.exit_price == pytest.approx(3100.0)
+    # long: (exit - entry) * size = (3100 - 3000) * 0.5 = 50
+    assert t.realized_pnl == pytest.approx(50.0)
+    assert t.exit_reason == "other"
+
+
+async def test_position_closure_writes_trade_row_short_loss(temp_db):
+    """Short side + losing trade — verifies sign convention."""
+    from cero.db.models import Trade
+    cfg = _cfg(temp_db)
+    ex = FakeExchange()
+    # Short 0.5 (signed -0.5) at entry 3000, marked at 3100 → loss.
+    ex.positions = [PositionInfo(
+        symbol="ETH/USDT:USDT", side="short", size=-0.5,
+        entry_price=3000.0, mark_price=3100.0, leverage=5.0,
+        unrealized_pnl=-50.0, exchange_position_id=None,
+    )]
+    gate = RiskGate(cfg.risk, cfg.news, event_bus=EventBus())
+    w = AccountWorker(cfg, ex, gate)
+
+    await w._tick()
+    ex.positions = []
+    await w._tick()
+
+    async with session_factory()() as s:
+        trades = (await s.execute(select(Trade))).scalars().all()
+    assert len(trades) == 1
+    t = trades[0]
+    assert t.side == "short"
+    assert t.size == pytest.approx(0.5)   # stored as absolute
+    # short: (entry - exit) * |size| = (3000 - 3100) * 0.5 = -50
+    assert t.realized_pnl == pytest.approx(-50.0)
+
+
 async def test_no_id_falls_back_to_symbol_side_key(temp_db):
     """Some exchanges don't return a stable position id. We should still
     reconcile using symbol+side as a fallback key."""

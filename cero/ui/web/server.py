@@ -16,6 +16,8 @@ import time
 from pathlib import Path
 from typing import Any, Optional
 
+import secrets as _secrets
+
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
@@ -39,6 +41,40 @@ from cero.events import EventBus, bus as default_bus
 
 
 STATIC_DIR = Path(__file__).parent / "static"
+
+
+def _install_basic_auth(app: FastAPI, cfg: Config) -> None:
+    """Add HTTP Basic Auth middleware if web.auth_user + web.auth_pass set.
+
+    No-op when both are empty (assumes 127.0.0.1 binding — localhost trust).
+    Validates that you set BOTH or NEITHER; raises on misconfigured half-set.
+    """
+    user = cfg.web.auth_user
+    password = cfg.web.auth_pass
+    if not user and not password:
+        return    # localhost mode, no auth
+    if not (user and password):
+        raise ValueError(
+            "web.auth_user and web.auth_pass must both be set, or both empty"
+        )
+
+    import base64
+    expected = base64.b64encode(f"{user}:{password}".encode()).decode()
+
+    @app.middleware("http")
+    async def basic_auth(request, call_next):  # noqa: ANN001
+        header = request.headers.get("authorization", "")
+        # Expected: "Basic <base64(user:pass)>"
+        if header.startswith("Basic "):
+            token = header.split(" ", 1)[1]
+            if _secrets.compare_digest(token, expected):
+                return await call_next(request)
+        from fastapi.responses import Response
+        return Response(
+            status_code=401,
+            content="auth required",
+            headers={"WWW-Authenticate": 'Basic realm="cero"'},
+        )
 
 
 def _downsample_snapshots(rows, max_points: int) -> list[dict]:
@@ -202,6 +238,17 @@ def build_app(
 
     app = FastAPI(title="Cero", version="0.1.0")
     bridge = WebSocketBridge(event_bus or default_bus)
+
+    # ── HTTP Basic Auth (optional but enforced when configured) ──────
+    # Implemented as middleware so it covers every HTTP route (including the
+    # dashboard root and static files) without needing per-route boilerplate.
+    # The @app.middleware("http") hook does NOT fire for WebSocket
+    # connections — those reach /ws/live unauthenticated. That's tolerable
+    # for LAN deployments because the WS only emits events also visible in
+    # the auth'd /api endpoints. If you ever expose this to the public
+    # internet, harden /ws/live separately (token query param, or
+    # require_auth at handshake).
+    _install_basic_auth(app, cfg)
 
     # Static dashboard (SPA-ish): one index.html + a couple of assets.
     if STATIC_DIR.is_dir():

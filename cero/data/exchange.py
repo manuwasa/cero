@@ -446,6 +446,28 @@ class ExchangeClient:
             fallback_symbol=sym,
         )
 
+    async def fetch_order(self, order_id: str, symbol: str) -> OrderInfo:
+        """Fetch the current state of an order by id. Used after
+        create_market_order to find out how much of the request actually
+        filled (the create response is sparse on bybit)."""
+        self._require_auth("fetch_order")
+        sym = self.normalize_symbol(symbol)
+        # Bybit's ccxt wrapper raises a defensive warning-as-exception on
+        # fetchOrder unless `acknowledged=True` is passed. For Cero's use
+        # case (fetching an order we placed seconds ago, well within the
+        # 500-recent-orders window), this is always safe.
+        params: dict[str, Any] = {}
+        if self.exch_cfg.name == "bybit":
+            params["acknowledged"] = True
+        o = await _retry(
+            lambda: self._ccxt.fetch_order(order_id, sym, params),
+            op=f"fetch_order {order_id} {sym}",
+        )
+        return _order_from_ccxt(
+            o, reduce_only=bool(o.get("reduceOnly")),
+            fallback_symbol=sym,
+        )
+
     async def cancel_order(self, order_id: str, symbol: str) -> None:
         self._require_auth("cancel_order")
         sym = self.normalize_symbol(symbol)

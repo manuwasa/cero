@@ -298,3 +298,71 @@ async def test_double_trip_is_idempotent_via_api(client):
     await c.post("/api/trip", json={"detail": "first"})
     await c.post("/api/trip", json={"detail": "second"})  # ignored — already tripped
     assert gate.trip_detail == "first"  # first one stuck
+
+
+# ──────────────────────────────────────────────────────────────────────
+# HTTP Basic Auth
+# ──────────────────────────────────────────────────────────────────────
+
+
+async def test_no_auth_when_credentials_empty(client):
+    """The default fixture has no auth_user/auth_pass — every endpoint
+    should be reachable without Authorization headers."""
+    c, _ = client
+    r = await c.get("/api/status")
+    assert r.status_code == 200
+
+
+async def test_auth_enforced_when_configured():
+    """With auth_user + auth_pass set, requests without Basic auth → 401."""
+    import base64, tempfile
+    from cero.brain.risk import RiskGate
+    from cero.events import EventBus
+    tmp = Path(tempfile.gettempdir()) / "cero_test_web_auth.db"
+    tmp.unlink(missing_ok=True)
+    cfg = _cfg(tmp)
+    cfg.web.auth_user = "alice"
+    cfg.web.auth_pass = "secret"
+    await init_db(cfg.database)
+    try:
+        gate = RiskGate(cfg.risk, cfg.news, event_bus=EventBus())
+        app = build_app(cfg, gate, exchange=None, event_bus=EventBus())
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
+            # No auth header → 401
+            r = await c.get("/api/status")
+            assert r.status_code == 401
+            assert "WWW-Authenticate" in {k.title(): v for k, v in r.headers.items()} or \
+                   "www-authenticate" in r.headers
+            # Wrong creds → 401
+            wrong = base64.b64encode(b"alice:wrongpass").decode()
+            r = await c.get("/api/status", headers={"Authorization": f"Basic {wrong}"})
+            assert r.status_code == 401
+            # Right creds → 200
+            right = base64.b64encode(b"alice:secret").decode()
+            r = await c.get("/api/status", headers={"Authorization": f"Basic {right}"})
+            assert r.status_code == 200
+    finally:
+        await close_db()
+        for suffix in ("", "-wal", "-shm"):
+            Path(str(tmp) + suffix).unlink(missing_ok=True)
+
+
+async def test_auth_misconfigured_raises_at_build():
+    """Setting only one of user/pass is a config error — fail loudly."""
+    import tempfile, pytest as _pytest
+    from cero.brain.risk import RiskGate
+    from cero.events import EventBus
+    tmp = Path(tempfile.gettempdir()) / "cero_test_web_misauth.db"
+    tmp.unlink(missing_ok=True)
+    cfg = _cfg(tmp)
+    cfg.web.auth_user = "alice"
+    cfg.web.auth_pass = ""    # password missing → half-configured
+    await init_db(cfg.database)
+    try:
+        gate = RiskGate(cfg.risk, cfg.news, event_bus=EventBus())
+        with _pytest.raises(ValueError):
+            build_app(cfg, gate, exchange=None)
+    finally:
+        await close_db()
+        for suffix in ("", "-wal", "-shm"):
+            Path(str(tmp) + suffix).unlink(missing_ok=True)

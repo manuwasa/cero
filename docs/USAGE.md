@@ -8,6 +8,42 @@ If you haven't done first-time setup, start with [`docs/SETUP.md`](SETUP.md).
 
 ---
 
+## ⚠️ Before you trust anything Cero says
+
+Cero's **code** has been tested and works end-to-end. Cero's **strategy** —
+the 8-criteria scoring in [`docs/CRITERIA.md`](CRITERIA.md) — has **not**
+been proven profitable on current crypto markets. It's based on respected
+SMC/ICT concepts but never validated empirically.
+
+That means:
+
+- The win rate you see when you boot Cero for the first time means **nothing**
+  until your signal sample reaches ~30 (suggestive) and then ~200 (reliable).
+- "Cero placed an order and lost" after 5 trades is statistical noise, not
+  proof of failure.
+- "Cero placed 10 winners in a row" after 10 trades is also statistical
+  noise, not proof of success.
+
+The right way to use Cero, especially if you're not an experienced trader:
+
+1. **`mode: signal_only`** for at least 4 weeks. No real money or testnet
+   money is placed; signals just accumulate in the DB.
+2. **Run [`scripts/morning_check.py`](../scripts/morning_check.py) once a
+   day** — 30-second daily glance at where you stand.
+3. **Run [`scripts/backtest_signals.py`](../scripts/backtest_signals.py)
+   weekly** — full validation-gate stats against accumulated signals.
+4. **When the gate passes** (200+ signals, ≥55% WR, PF ≥1.5, stable),
+   consider `approval`. Then `auto`. Each step earns the next.
+
+If at any point the data says "the strategy doesn't have edge" — accept
+that. Either rework the criteria (research, not guesswork), pick a
+different strategy, or stop. Don't go to mainnet hoping it'll be different.
+
+See [`docs/VALIDATION.md`](VALIDATION.md) for the full statistical
+reasoning. The math is unforgiving but the discipline saves accounts.
+
+---
+
 ## Starting and stopping
 
 ```powershell
@@ -378,6 +414,118 @@ asyncio.run(main())
 After reset, the next signal log line's reason changes from
 `TRIPPED (...)` back to the normal sizing reason
 (`tier sizing is 0 (C or D)`, `ok`, etc.). That's your confirmation.
+
+---
+
+## What's exact, what's approximate
+
+The numbers Cero shows on `/pnl`, the dashboard, and the `trades` table are
+**accurate enough for the 200-trade validation gate** but **not for tax or
+cent-accurate accounting**. Worth knowing exactly what's approximated:
+
+### Exact
+
+- **Trade count** — every position that opens then closes writes one Trade row.
+  The count you see is the count that happened.
+- **Win/loss sign** — `realized_pnl > 0` is a win, `< 0` is a loss. Sign is
+  always correct.
+- **Direction (long/short)** — recorded exactly from the Signal that opened it.
+- **Entry price (intended)** — the price the brain saw when it built the signal.
+- **Size** — the *actual filled amount* on the exchange, including partial fills
+  (e.g. requested 12 SOL, only 1.7 filled → DB shows 1.7).
+- **Stop loss / take profit** — exact, since they're the bracket params we sent.
+
+### Approximate
+
+- **`Trade.entry_price`** — uses the *intended* entry from the Signal, not the
+  actual exchange fill price. On testnet (thin liquidity) and during volatile
+  moments, slippage can be 0.1–0.5%. Mainnet on top-volume pairs: usually <0.05%.
+- **`Trade.exit_price`** — uses the *last `mark_price` we observed* before the
+  position disappeared. The real fill might have been at SL or TP, which is
+  typically within a few ticks of the mark but not identical. Same magnitude of
+  error as entry.
+- **`Trade.realized_pnl`** — computed from the two approximate prices above
+  (`(exit - entry) × size`, sign flipped for shorts). Magnitude is roughly
+  right; expect 0.1–1% error vs. bybit's actual reported P&L.
+- **`Trade.exit_reason`** — always `'other'`. We don't currently distinguish SL
+  hit / TP hit / manual close / liquidation. Fixing this requires a
+  `fetch_closed_orders` follow-up pass in `account_worker`, deferred.
+- **`Trade.fees`** — always `0.0`. We don't track exchange fees. Bybit charges
+  ~0.06% taker fee on perps, so a $1,000 trade pays $0.60 each way ($1.20 round
+  trip). Over 200 trades that's ~$240 of unaccounted fees on a $10k account.
+
+### What this means in practice
+
+For the validation gate (`docs/VALIDATION.md`):
+- **Trade count, win rate, profit factor** → calculated from the *signs* of
+  `realized_pnl`. These are reliable.
+- **Average win / average loss / max drawdown** → magnitudes are 0.1–1% off.
+  Not enough to change a "pass" into a "fail" or vice versa unless you're right
+  on the edge.
+
+For real-world accounting:
+- **Always cross-reference with bybit's official "Trade History" or
+  "Closed P&L" export** before any tax filing or capital decision.
+- Cero's numbers are for *operational visibility* (is it working? am I on
+  pace?), not *financial truth*.
+
+If/when you need cent-accurate numbers, the fix is to extend `account_worker`
+to call `exchange.fetch_closed_orders(symbol)` whenever it detects a position
+closure, and rewrite the Trade row's exit_price/realized_pnl/exit_reason/fees
+from that response. ~50 lines of work; deferred until validation actually
+needs it.
+
+---
+
+## Backtesting accumulated signals
+
+`scripts/backtest_signals.py` answers the question "if we had taken every
+tier-A/B signal at its stated entry/SL/TP, what would the win rate be?"
+
+It walks forward through 5-minute candles after each signal and finds whether
+SL or TP was hit first. No real orders are placed.
+
+```powershell
+# default: tier A+B, 24h horizon, all symbols
+uv run python scripts/backtest_signals.py
+
+# narrow to one symbol, longer horizon
+uv run python scripts/backtest_signals.py --symbol ETH/USDT:USDT --horizon-hours 48
+
+# only tier B
+uv run python scripts/backtest_signals.py --tier B
+```
+
+Output gives you win rate, profit factor, max consecutive losses, stability
+(first-half vs last-half WR), per-tier + per-symbol breakdown, and an explicit
+**validation-gate check** against the four thresholds from
+[docs/VALIDATION.md](VALIDATION.md):
+- count >= 200
+- win rate >= 55%
+- profit factor >= 1.5
+- stability (first half vs last half within 5 percentage points)
+
+### What it doesn't model (yet)
+
+- **Slippage** — real fills are 0.05–0.5% off the brain's intended entry
+- **Fees** — ~0.06% per leg on bybit perps, missed in the backtest
+- **Partial fills** — IOC cancellation on thin liquidity (testnet especially)
+
+Real auto-mode performance will be **0.2–1% worse per trade** than what the
+backtester shows. Treat the backtest as an honest upper bound, not a forecast.
+
+### Why this is the right validation tool
+
+You don't need to actually run `auto` mode to know whether the strategy
+works. Every tier-A/B signal Cero emits in **any mode** (signal_only,
+approval, auto) gets persisted to the `signals` table with the brain's
+intended entry/SL/TP. The backtester computes outcomes from those + the
+candle history — same answer you'd get from auto-mode trading minus the
+slippage/fees you'd actually pay.
+
+Run it daily/weekly as your signal sample grows. Once it shows gate-passing
+stats over 200+ signals, you have evidence the brain's edge is real, and
+auto mode becomes a reasonable next step.
 
 ---
 

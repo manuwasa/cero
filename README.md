@@ -2,7 +2,9 @@
 
 A personal crypto trading assistant. Watches markets, scores setups against your rules, and (optionally) trades on your behalf — with a kill switch you can hit anytime.
 
-> **Status:** working v1. Boots end-to-end against bybit testnet — backfills candles, scores setups with the 8 criteria, sends Telegram alerts, serves a live dashboard at `http://127.0.0.1:8765`. ~155 tests passing.
+> **Status:** working v1. Boots end-to-end against bybit testnet — backfills candles, scores setups with the 8 criteria, sends Telegram alerts, serves a live dashboard at `http://127.0.0.1:8765`. ~160 tests passing.
+
+> ⚠️ **The code works. The strategy is unvalidated.** Cero's 8-criteria scoring is a reasonable hypothesis based on standard SMC/ICT trading concepts, but **no one has proven it's profitable on current crypto markets** — including you, until you've collected 200+ signals and the backtester shows the validation gate passing. Treat Cero as a science experiment, not a money printer. Run `signal_only` mode for weeks before considering `auto`. See [`docs/VALIDATION.md`](docs/VALIDATION.md).
 
 ---
 
@@ -37,6 +39,7 @@ Three guides cover what you actually need:
 
 - **[docs/SETUP.md](docs/SETUP.md)** — first-time setup. Bybit testnet, KYC, faucet, API key, Telegram bot, config. Plan ~30 minutes.
 - **[docs/USAGE.md](docs/USAGE.md)** — daily operation. The three modes, dashboard tour, every Telegram command, when to TRIP, mainnet checklist.
+- **[docs/DEPLOY_ANDROID.md](docs/DEPLOY_ANDROID.md)** — run Cero 24/7 on an old Android phone via Termux. $0/month, no credit card. Best option if you don't have a spare laptop.
 - **[docs/DEVELOPMENT.md](docs/DEVELOPMENT.md)** — for whoever opens this codebase later. Project layout, testing patterns, how to add an exchange / criterion / mode / notifier, common gotchas.
 
 The opinionated reading:

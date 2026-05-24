@@ -31,7 +31,7 @@ from sqlalchemy import delete, select, update
 from cero.brain.risk import RiskGate
 from cero.config import Config
 from cero.data.exchange import ExchangeClient, PositionInfo
-from cero.db.models import AccountSnapshot, Position as PositionRow
+from cero.db.models import AccountSnapshot, Position as PositionRow, Trade as TradeRow
 from cero.db.session import session_factory
 
 
@@ -174,12 +174,16 @@ class AccountWorker:
                 _update_row(tracked_by_id[pid], p)
                 # SQLAlchemy 2.0 unit-of-work: in-place mutation tracked.
                 s.add(tracked_by_id[pid])
-            # deletions
+            # deletions — a position the exchange no longer reports has closed.
+            # Write a Trade row capturing what we know before deleting the
+            # Position so PnL stats include it. We don't know the exact exit
+            # price (fills could have been at SL, TP, or anywhere in between),
+            # so we approximate using the last `mark_price` we observed. For
+            # tight validation later, swap this for a fetch_closed_orders call.
             if gone_ids:
-                # Only delete rows whose id (or symbol:side fallback) is gone.
-                # Use a per-row check rather than a bulk delete to avoid races.
                 for pid in gone_ids:
                     row = tracked_by_id[pid]
+                    s.add(_trade_row_from_closed_position(row))
                     await s.execute(
                         delete(PositionRow).where(PositionRow.id == row.id)
                     )
@@ -223,3 +227,41 @@ def _update_row(row: PositionRow, p: PositionInfo) -> None:
     row.take_profit = p.take_profit
     row.size = p.size
     row.updated_at = int(time.time() * 1000)
+
+
+def _trade_row_from_closed_position(row: PositionRow) -> TradeRow:
+    """Build a TradeRow from a Position that's about to be deleted.
+
+    Approximations:
+      - exit_price: last observed mark_price (the actual fill was likely at
+        SL or TP, but we don't have fetch_closed_orders wired yet).
+      - realized_pnl: computed from (exit - entry) * signed_size, also an
+        approximation. Sign is correct, magnitude is roughly right when the
+        position closed near the mark we last saw.
+      - exit_reason: 'other' since we can't distinguish SL/TP/manual without
+        the closed-orders endpoint. A future fill-watcher would set this
+        precisely.
+
+    These approximations are good enough for validation-gate counting
+    (trade count, win rate sign) but NOT for cent-accurate accounting. For
+    real PnL, cross-reference with the exchange's closed-PnL report."""
+    size_abs = abs(row.size)
+    entry = row.entry_price
+    exit_p = row.mark_price
+    if row.side == "long":
+        realized = (exit_p - entry) * size_abs
+    else:  # short
+        realized = (entry - exit_p) * size_abs
+    return TradeRow(
+        symbol=row.symbol,
+        side=row.side,
+        size=size_abs,
+        entry_price=entry,
+        exit_price=exit_p,
+        opened_at=row.opened_at,
+        closed_at=int(time.time() * 1000),
+        realized_pnl=realized,
+        fees=0.0,                  # we don't track fees yet
+        exit_reason="other",
+        signal_id=row.signal_id,
+    )

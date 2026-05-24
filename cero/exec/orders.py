@@ -116,10 +116,42 @@ class CcxtOrderPlacer:
             bracket.sl, bracket.tp,
         )
 
-        # 3) Record the Position. Failure here doesn't reverse the live order —
-        #    account_worker reconciles state from the exchange on the next poll.
+        # 2b) Fetch the actual filled amount. Bybit (and most exchanges) treat
+        #     market orders as IOC by default — if liquidity is thin (testnet
+        #     books, low-cap alts, off-hours), the order partial-fills and the
+        #     unfilled portion is canceled. We need the real fill size for the
+        #     Position row, otherwise our records overstate the actual exposure.
+        actual_amount = bracket.amount
         try:
-            await self._record(signal, order, bracket)
+            fetched = await self.exchange.fetch_order(order.id, signal.symbol)
+            if fetched.filled > 0:
+                actual_amount = fetched.filled
+            if fetched.filled < bracket.amount * 0.99:    # >1% short = partial
+                log.warning(
+                    "partial fill on {}: requested {} got {} (status={})",
+                    signal.symbol, bracket.amount, fetched.filled, fetched.status,
+                )
+            if fetched.filled == 0:
+                log.warning(
+                    "order {} returned with filled=0 (status={}) — not recording",
+                    order.id, fetched.status,
+                )
+                return order.id
+        except Exception as e:  # noqa: BLE001
+            log.warning(
+                "fetch_order failed for {}, using requested amount: {}",
+                order.id, e,
+            )
+
+        # 3) Record the Position with the *actual* filled amount. Failure here
+        #    doesn't reverse the live order — account_worker reconciles state
+        #    from the exchange on the next poll.
+        try:
+            bracket_actual = _Bracket(
+                side=bracket.side, amount=actual_amount,
+                sl=bracket.sl, tp=bracket.tp,
+            )
+            await self._record(signal, order, bracket_actual)
         except Exception as e:  # noqa: BLE001
             log.exception("position record failed (order id={}): {}", order.id, e)
 
@@ -199,14 +231,36 @@ class CcxtOrderPlacer:
     async def _record(
         self, signal: Signal, order: OrderInfo, bracket: _Bracket
     ) -> None:
-        """Insert a Position row and flag the Signal as executed."""
+        """Insert a Position row and flag the Signal as executed.
+
+        We look up the matching Signal row by (symbol, ts) rather than
+        requiring it to be passed in. The scheduler always persists the
+        Signal before calling mode.handle_signal, so it's there in the DB
+        by the time we run.
+        """
+        from sqlalchemy import desc, select   # local — used only here
+
         size_signed = bracket.amount if signal.direction == "long" else -bracket.amount
-        signal_id = (
-            self._signal_id_provider() if self._signal_id_provider else None
-        )
+
         async with session_factory()() as s:
+            # Find the matching Signal row written by the scheduler.
+            sig_row = (
+                await s.execute(
+                    select(SignalRow)
+                    .where(SignalRow.symbol == signal.symbol)
+                    .where(SignalRow.ts == signal.ts)
+                    .order_by(desc(SignalRow.id)).limit(1)
+                )
+            ).scalar_one_or_none()
+            signal_id = sig_row.id if sig_row else None
+
+            # exchange_position_id stays None. The order id is NOT the
+            # position id on bybit (fetch_positions returns None there); if
+            # we stored it here, account_worker's symbol+side fallback key
+            # wouldn't match on the next reconcile and would TRIP on our own
+            # freshly-placed trade. The signal_id below is the real link.
             row = Position(
-                exchange_position_id=order.id,
+                exchange_position_id=None,
                 symbol=signal.symbol,
                 side=signal.direction,
                 size=size_signed,

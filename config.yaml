@@ -61,6 +61,11 @@ timeframes:
 # for 50-EMA + ATR(14) + swing structure; 300 gives headroom.
 backfill_candles: 300
 
+# How often the account worker polls balance + positions via REST.
+# Lower = more API calls but tighter sync; higher = less load but slower
+# detection of fills or unexpected positions.
+account_poll_seconds: 10
+
 # ──────────────────────────────────────────────────────────────────────
 # EXECUTION MODE
 # ──────────────────────────────────────────────────────────────────────
@@ -137,12 +142,21 @@ news:
     - forexfactory     # scraped, free
     # - tradingeconomics  # paid API
 
-  # Twitter accounts to monitor for breaking news (handled separately)
+  # RSS feeds the news_worker polls every ~15 min for crypto headlines.
+  # Items are stored in the `news` table and shown on the dashboard for
+  # context — they do NOT auto-trigger a blackout (that's the calendar's
+  # job). Add or swap freely; format is plain URL.
+  rss_feeds:
+    - https://cointelegraph.com/rss
+    - https://www.reddit.com/r/cryptocurrency/.rss
+
+  # Twitter accounts to monitor for breaking news (handled separately).
+  # Free Twitter API doesn't exist anymore; this list is parked here for
+  # when/if a scraping path becomes viable.
   twitter_watchlist:
     - WuBlockchain
     - Cointelegraph
     - DocumentingBTC
-  # Tweets here do NOT auto-trigger blackout; they're shown for context.
 
 # ──────────────────────────────────────────────────────────────────────
 # ALERTING (Telegram)

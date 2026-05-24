@@ -1,21 +1,174 @@
-/* TODO (Claude Code): style the dashboard.
-   Reference aesthetic (from Elysia screenshots):
-   - Dark background (#0a0a0f or similar)
-   - Pink/magenta accent (#ff6b9d)
-   - Monospace fonts for numbers
-   - Compact, info-dense layout
-*/
+/* Cero dashboard — dark, dense, monospace-heavy. No frameworks. */
+
 :root {
-  --bg: #0a0a0f;
-  --fg: #e0e0e0;
-  --accent: #ff6b9d;
-  --green: #4ade80;
-  --red: #f87171;
-  --mono: ui-monospace, "JetBrains Mono", Menlo, Consolas, monospace;
+  --bg:        #0a0a0f;
+  --bg-card:   #14141c;
+  --bg-input:  #1f1f2c;
+  --fg:        #e0e0e0;
+  --fg-muted:  #888;
+  --accent:    #ff6b9d;
+  --green:     #4ade80;
+  --red:       #f87171;
+  --amber:     #fbbf24;
+  --border:    #2a2a38;
+  --mono:      ui-monospace, "JetBrains Mono", Menlo, Consolas, monospace;
 }
+
+* { box-sizing: border-box; }
+html, body { margin: 0; padding: 0; }
+
 body {
-  margin: 0;
   background: var(--bg);
   color: var(--fg);
   font-family: var(--mono);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+header {
+  padding: 12px 20px;
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  gap: 20px;
+}
+header h1 {
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--accent);
+  margin: 0;
+  letter-spacing: 0.05em;
+}
+.muted { color: var(--fg-muted); font-size: 12px; }
+.hidden { display: none !important; }
+
+.banner {
+  margin-left: auto;
+  background: var(--red);
+  color: white;
+  padding: 4px 12px;
+  border-radius: 4px;
+  font-weight: 600;
+}
+
+main {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 16px;
+  padding: 20px;
+}
+
+.card {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 16px;
+  min-width: 0;        /* let tables truncate inside grid cells */
+}
+.card.wide { grid-column: span 3; }
+.card h2 {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--fg-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  margin: 0 0 12px 0;
+}
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+  font-variant-numeric: tabular-nums;
+}
+th, td {
+  text-align: left;
+  padding: 4px 8px;
+  border-bottom: 1px solid var(--border);
+  vertical-align: top;
+}
+thead th {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--fg-muted);
+  font-weight: 600;
+}
+.card table tr:last-child td,
+.card table tr:last-child th { border-bottom: none; }
+
+.tier-A { color: var(--green); font-weight: 700; }
+.tier-B { color: var(--amber); font-weight: 600; }
+.tier-C { color: var(--fg-muted); }
+.tier-D { color: var(--fg-muted); opacity: 0.6; }
+
+.dir-long  { color: var(--green); }
+.dir-short { color: var(--red); }
+.dir-none  { color: var(--fg-muted); }
+
+.pnl-pos { color: var(--green); }
+.pnl-neg { color: var(--red); }
+
+button {
+  font-family: var(--mono);
+  font-size: 12px;
+  font-weight: 600;
+  padding: 6px 14px;
+  border-radius: 4px;
+  border: 1px solid var(--border);
+  cursor: pointer;
+  background: var(--bg-input);
+  color: var(--fg);
+  letter-spacing: 0.05em;
+}
+button:hover { border-color: var(--accent); }
+button.danger { background: var(--red); color: white; border-color: var(--red); }
+button.primary { background: var(--accent); color: white; border-color: var(--accent); }
+
+#events-list,
+#news-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  max-height: 240px;
+  overflow-y: auto;
+  font-size: 12px;
+}
+#events-list li,
+#news-list li {
+  padding: 4px 8px;
+  border-bottom: 1px solid var(--border);
+}
+#events-list li:last-child,
+#news-list li:last-child { border-bottom: none; }
+#events-list .topic { color: var(--accent); margin-right: 8px; }
+#events-list time,
+#news-list time { color: var(--fg-muted); margin-right: 8px; }
+#news-list .source { color: var(--accent); margin-right: 8px; }
+#news-list a { color: var(--fg); text-decoration: none; }
+#news-list a:hover { text-decoration: underline; }
+
+#trip-status { margin-top: 8px; }
+
+.chart-controls {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  margin-bottom: 12px;
+  font-size: 12px;
+}
+.chart-controls label { display: flex; gap: 6px; align-items: center; color: var(--fg-muted); }
+.chart-controls select {
+  font-family: var(--mono);
+  background: var(--bg-input);
+  color: var(--fg);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 3px 6px;
+}
+.chart-controls #chart-last { margin-left: auto; font-variant-numeric: tabular-nums; }
+.chart-wrap { height: 260px; position: relative; }
+
+@media (max-width: 900px) {
+  main { grid-template-columns: 1fr; }
+  .card.wide { grid-column: span 1; }
 }

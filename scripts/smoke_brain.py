@@ -15,6 +15,7 @@ from pathlib import Path
 from sqlalchemy import select
 
 from cero.brain.criteria import MarketContext, evaluate_all
+from cero.brain.scoring import aggregate
 from cero.config import load_config
 from cero.data.exchange import Candle as CandleType
 from cero.data.exchange import ExchangeClient
@@ -87,8 +88,13 @@ async def main() -> None:
     for symbol in cfg.symbols:
         ctx = await load_context(symbol, cfg.criteria_weights, ROUND_STEPS.get(symbol, 1000.0), now_ms)
         results = evaluate_all(ctx)
-        total = sum(r.score for r in results)
-        print(f"\n=== {symbol}  price={ctx.current_price:.2f}  total={total}/100 ===")
+        report = aggregate(results, cfg.risk)
+        actionable = "ACTIONABLE" if report.is_actionable else "no trade"
+        print(
+            f"\n=== {symbol}  price={ctx.current_price:.2f}  "
+            f"score={report.score}/100  tier={report.tier}  "
+            f"direction={report.direction}  size={report.size_multiplier}x  [{actionable}] ==="
+        )
         for r in results:
             mark = "PASS" if r.passed else "fail"
             dh = f"  -> {r.direction_hint}" if r.direction_hint else ""

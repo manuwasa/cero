@@ -7,7 +7,13 @@
       "PowerShell($env:Path = \"C:\\\\Users\\\\mekan\\\\AppData\\\\Roaming\\\\Python\\\\Python314\\\\Scripts;$env:Path\"; uv run python -c \"from cero.config import load_config; _, s = load_config\\(\\); print\\('key:', repr\\(s.exchange_api_key[:6] + '...' + s.exchange_api_key[-3:]\\)\\); print\\('secret_len:', len\\(s.exchange_api_secret\\)\\); print\\('passphrase:', repr\\(s.exchange_passphrase\\)\\)\" 2>&1)",
       "PowerShell($env:Path = \"C:\\\\Users\\\\mekan\\\\AppData\\\\Roaming\\\\Python\\\\Python314\\\\Scripts;$env:Path\"; uv run python -c \"import ccxt, ccxt.async_support as a; print\\('ccxt', ccxt.__version__\\); print\\('has bybit:', hasattr\\(a, 'bybit'\\)\\); print\\('pro has bybit:', hasattr\\(__import__\\('ccxt.pro', fromlist=['bybit']\\), 'bybit'\\)\\)\" 2>&1)",
       "PowerShell($env:Path = \"C:\\\\Users\\\\mekan\\\\AppData\\\\Roaming\\\\Python\\\\Python314\\\\Scripts;$env:Path\"; uv run python scripts/smoke_exchange.py 2>&1)",
-      "PowerShell($env:Path = \"C:\\\\Users\\\\mekan\\\\AppData\\\\Roaming\\\\Python\\\\Python314\\\\Scripts;$env:Path\"; uv run python scripts/smoke_exchange.py 2>&1 | Out-File -FilePath smoke.log -Encoding utf8; Get-Content smoke.log -Raw)"
+      "PowerShell($env:Path = \"C:\\\\Users\\\\mekan\\\\AppData\\\\Roaming\\\\Python\\\\Python314\\\\Scripts;$env:Path\"; uv run python scripts/smoke_exchange.py 2>&1 | Out-File -FilePath smoke.log -Encoding utf8; Get-Content smoke.log -Raw)",
+      "Bash(curl -s http://127.0.0.1:8765/api/status)",
+      "Bash(curl -s \"http://127.0.0.1:8765/api/candles/ETH%2FUSDT%3AUSDT/1h?limit=3\")",
+      "Bash(curl -s -o /dev/null -w \"HTTP %{http_code}\\\\n\" \"http://127.0.0.1:8765/static/index.html\")",
+      "Bash(curl -s -o /dev/null -w \"HTTP %{http_code}\\\\n\" \"http://127.0.0.1:8765/static/app.js\")",
+      "Bash(curl -s \"http://127.0.0.1:8765/api/news?limit=3\")",
+      "Bash(curl -s \"http://127.0.0.1:8765/api/account/history?hours=24&max_points=10\")"
     ]
   }
 }

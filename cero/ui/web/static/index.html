@@ -1,44 +1,117 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Cero</title>
-  <link rel="stylesheet" href="/static/style.css" />
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Cero</title>
+<link rel="stylesheet" href="/static/style.css">
 </head>
 <body>
-  <!--
-    TODO (Claude Code): build out the dashboard.
-    Reference layout (from the Elysia inspiration screenshots):
+<header>
+  <h1>cero</h1>
+  <div id="status" class="muted">connecting…</div>
+  <div id="trip-banner" class="banner hidden"></div>
+</header>
 
-    HEADER STRIP:
-      brand · env · live/closed · equity · dd% · positions · TRIP · RESET
+<main>
+  <section class="card">
+    <h2>account</h2>
+    <table>
+      <tr><th>equity</th><td id="acc-equity">—</td></tr>
+      <tr><th>balance</th><td id="acc-balance">—</td></tr>
+      <tr><th>unrealized</th><td id="acc-upnl">—</td></tr>
+      <tr><th>margin used</th><td id="acc-margin">—</td></tr>
+      <tr><th>source</th><td id="acc-source" class="muted">—</td></tr>
+    </table>
+  </section>
 
-    LEFT (70%):
-      TradingView Lightweight Charts chart with:
-        - candles
-        - fib levels
-        - support/resistance lines
-        - SL / TP / entry markers
-        - timeframe selector (5m / 15m / 1h / 4h / 1d)
-        - symbol selector
+  <section class="card">
+    <h2>pnl</h2>
+    <table>
+      <tr><th>today</th><td id="pnl-today">—</td></tr>
+      <tr><th>W / L today</th><td id="pnl-wl">—</td></tr>
+      <tr><th>all-time</th><td id="pnl-all">—</td></tr>
+    </table>
+  </section>
 
-    RIGHT (30%):
-      TRADE READINESS panel:
-        - tier badge
-        - score / 100
-        - direction
-        - sizing
-      TRADE CRITERIA list (8 items, each ✓ or ✗ with detail)
-      INTRADAY section (criteria 5-7)
-      HIGH-IMPACT NOTES (news feed)
+  <section class="card">
+    <h2>controls</h2>
+    <button id="btn-trip" class="danger">TRIP</button>
+    <button id="btn-reset" class="primary">reset</button>
+    <div id="trip-status" class="muted"></div>
+  </section>
 
-    LIBRARIES TO USE:
-      - TradingView Lightweight Charts (free, MIT) for the chart
-      - Vanilla JS or Alpine.js for reactivity
-      - No build step; ES modules in browser
-  -->
-  <div id="app">Cero — dashboard not yet implemented. See server.py and CLAUDE.md.</div>
-  <script src="/static/app.js" type="module"></script>
+  <section class="card wide">
+    <h2>readiness</h2>
+    <table id="readiness-table">
+      <thead><tr><th>symbol</th><th>tier</th><th>direction</th><th>score</th><th>age</th></tr></thead>
+      <tbody></tbody>
+    </table>
+  </section>
+
+  <section class="card wide" id="equity-card">
+    <h2>equity</h2>
+    <div class="chart-controls">
+      <label>window
+        <select id="equity-window">
+          <option value="6">6h</option>
+          <option value="24" selected>24h</option>
+          <option value="72">3d</option>
+          <option value="168">7d</option>
+          <option value="720">30d</option>
+        </select>
+      </label>
+      <span id="equity-last" class="muted"></span>
+    </div>
+    <div class="chart-wrap"><canvas id="equity-chart"></canvas></div>
+  </section>
+
+  <section class="card wide" id="chart-card">
+    <h2>price</h2>
+    <div class="chart-controls">
+      <label>symbol
+        <select id="chart-symbol"></select>
+      </label>
+      <label>timeframe
+        <select id="chart-tf">
+          <option>5m</option>
+          <option>15m</option>
+          <option>30m</option>
+          <option selected>1h</option>
+          <option>4h</option>
+          <option>1d</option>
+        </select>
+      </label>
+      <span id="chart-last" class="muted"></span>
+    </div>
+    <div class="chart-wrap"><canvas id="price-chart"></canvas></div>
+  </section>
+
+  <section class="card wide">
+    <h2>positions</h2>
+    <table id="positions-table">
+      <thead><tr>
+        <th>symbol</th><th>side</th><th>size</th>
+        <th>entry</th><th>mark</th><th>uPnL</th><th>sl / tp</th>
+      </tr></thead>
+      <tbody></tbody>
+    </table>
+    <div id="positions-empty" class="muted hidden">no open positions</div>
+  </section>
+
+  <section class="card wide" id="news-card">
+    <h2>news</h2>
+    <ul id="news-list"></ul>
+    <div id="news-empty" class="muted hidden">no headlines yet</div>
+  </section>
+
+  <section class="card wide" id="events-card">
+    <h2>live events</h2>
+    <ol id="events-list"></ol>
+  </section>
+</main>
+
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+<script src="/static/app.js"></script>
 </body>
 </html>

@@ -80,6 +80,7 @@ class NewsConfig(BaseModel):
     blackout_minutes_after: int = Field(default=15, ge=0)
     blackout_impacts: list[ImpactLevel] = Field(default_factory=lambda: ["high"])
     sources: list[str] = Field(default_factory=list)
+    rss_feeds: list[str] = Field(default_factory=list)
     twitter_watchlist: list[str] = Field(default_factory=list)
 
 
@@ -122,6 +123,7 @@ class Config(BaseModel):
         default_factory=lambda: ["5m", "15m", "30m", "1h", "4h", "1d"], min_length=1
     )
     backfill_candles: int = Field(default=300, ge=0, le=2000)
+    account_poll_seconds: int = Field(default=10, ge=2, le=300)
     mode: Mode
     risk: RiskConfig
     criteria_weights: CriteriaWeights

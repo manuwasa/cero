@@ -89,8 +89,9 @@ Each top-level module has one responsibility and a defined interface.
 | `brain/scoring.py` | criteria results | nothing | nothing (pure) |
 | `brain/risk.py` | `accounts`, `trades`, config | nothing | nothing (pure) |
 | `brain/signals.py` | all of brain | `signals` | nothing |
-| `exec/modes.py` | `signals`, config | nothing | telegram, executor |
-| `exec/orders.py` | `signals`, `accounts` | `trades`, `positions` | exchange |
+| `brain/scheduler.py` | all of `data/` tables | `signals` | brain pure-fns |
+| `exec/modes.py` | `signals`, config | `signals.executed` | notifier, placer |
+| `exec/orders.py` | live exchange state | `positions` | exchange |
 | `ui/telegram/bot.py` | all tables | `signals` (approvals) | brain queries |
 | `ui/web/server.py` | all tables | nothing | brain queries |
 
@@ -120,27 +121,30 @@ This is the most important flow to understand. Trace it:
    → maps to tier (A/B/C/D)
    → determines direction (long/short/none)
 
-5. risk.size(account, tier, config) returns position size
+5. risk.RiskGate.size_for(...) returns a SizingDecision
    → applies tier modifier (A=1x, B=0.5x, C=0x)
    → applies daily loss cap
-   → applies news blackout
-   → returns 0 if any gate fails
+   → applies news blackout (from calendar_events)
+   → applies max concurrent positions
+   → returns size=0 + a reason string if any gate fails
 
-6. signals.emit_if_changed(symbol, tier, direction, size)
-   → if state changed meaningfully, writes Signal to DB
-   → publishes "signal:new" event
+6. signals.build_signal(ctx, report, risk_gate, ...) → Signal
+   → fills entry / stop_loss / take_profit using ATR(H1), clamped to 0.3–3% of price
+   → persists to the `signals` table via persist_signal()
+   → scheduler publishes "signal:new" event for actionable tiers
 
 7. exec.modes dispatches based on configured mode:
-   → signal_only: telegram.send("READINESS BTC tier B short 0.5x")
-   → approval:    telegram.ask("Approve trade?") and wait for callback
-   → auto:        orders.place(signal) immediately
+   → signal_only: notifier.send_signal(signal)
+   → approval:    notifier.request_approval(signal, timeout_s); place if ✅
+   → auto:        if A/B and not tripped → placer.place(signal)
 
 8. If trade placed:
-   → orders.place(signal) calls exchange.create_order via ccxt
-   → also places OCO algo orders for SL/TP
-   → on fill (via WebSocket), updates `positions` and `trades`
-   → telegram.send("Position opened")
-   → dashboard pushes update via WebSocket
+   → CcxtOrderPlacer.place() calls exchange.create_market_order via ccxt
+   → SL/TP attached as native position-level brackets in `params`
+     (bybit/most modern perps handle these as OCO at the position level)
+   → writes a Position row + flips signals.executed = True
+   → account_worker reconciles open positions every 10s
+   → telegram + dashboard refresh on next poll
 ```
 
 If anything fails at any step, the system stays in a safe state: no half-placed orders, no orphaned stops, no silent failures.
@@ -151,28 +155,39 @@ Three layers:
 
 1. **SQLite (`cero.db`)** — persistent, durable. Survives restarts. Single source of truth for: candles, account balance history, positions, trades, signals, news, calendar events.
 
-2. **In-memory state (`cero/state.py`)** — derived, fast. The current tier per symbol, the live account snapshot, the trip status, the active mode. Rebuilt from DB on startup.
+2. **In-memory state** — derived, fast. Not a separate module; held as
+   attributes on the long-lived objects in `cero/main.py`:
+   - `RiskGate` (in `cero/brain/risk.py`) holds the trip state — and
+     hydrates from the `trips` table on startup so a restart doesn't
+     accidentally un-trip.
+   - `PriceWorker`, `AccountWorker`, etc. hold their own task handles.
+   - The active `ExecutionMode` is built once at boot from `cfg.mode`.
 
-3. **PubSub events (`cero/events.py`)** — transient. Used to decouple "candle arrived" from "brain evaluates" from "executor acts." Implemented as an asyncio.Queue or asyncio-pubsub library.
+3. **PubSub events (`cero/events.py`)** — transient. Used to decouple "candle arrived" from "brain evaluates" from "executor acts." Implemented as `asyncio.Queue` per subscriber, **best-effort delivery** (full queues drop with a warning). Workers always write to the DB first and publish second, so a missed event never means lost state.
 
 ## The TRIP system
 
-TRIP is the kill switch. When tripped:
-- `state.tripped = True` is set
-- All open orders are cancelled
-- All open positions are closed at market
-- No new signals will be acted on
-- A red banner appears in the dashboard
-- A Telegram alert is sent
+TRIP is the kill switch, implemented as `RiskGate` in `cero/brain/risk.py`.
+When tripped:
+- `RiskGate.tripped` flips to True; a `TripEvent` row is inserted.
+- `RiskGate.trip()` publishes `trip:fired` on the bus.
+- `TripWatcher` (in `cero/exec/modes.py`) reacts: cancels every open order
+  and closes every open position via the `OrderPlacer`.
+- `RiskGate.size_for(...)` returns 0 with `blocked_by="tripped"` for every
+  signal, so no new trades enter even if the brain emits them.
+- The dashboard shows a red banner; Telegram sends a notice.
 
 Triggers (any one trips):
-- Manual: `/trip` command or dashboard button
-- Daily loss exceeds `config.risk.max_daily_loss_pct`
-- Consecutive losses exceed `config.risk.max_consecutive_losses`
-- Exchange API has returned errors above threshold in last N minutes
-- Unexpected position appears (someone trading the same account)
+- **Manual**: `/trip` Telegram command or dashboard button.
+- **Daily loss** exceeds `config.risk.max_daily_loss_pct` (default 3%).
+- **Consecutive losses** reach `config.risk.max_consecutive_losses` (default 4).
+- **Unexpected position** appears on the exchange — detected by
+  `account_worker` reconciliation. The first poll imports any existing
+  positions silently; only positions appearing *after* boot trip.
 
-Only un-trips via explicit `/reset` command. Never auto-resets.
+Only un-trips via explicit `/reset` command (Telegram or dashboard). Never
+auto-resets. `RiskGate.hydrate()` reads the most recent un-cleared trip
+row on boot, so a restart preserves trip state.
 
 ## Three modes
 
@@ -198,7 +213,13 @@ class AutoMode:
             await orders.place(signal)
 ```
 
-Mode is set in `config.yaml` and can be changed live via `/mode signal_only|approval|auto`.
+Mode is set at boot from `config.yaml`. The `Notifier` and `OrderPlacer`
+are injected as Protocols (see `cero/exec/protocols.py`) — concrete
+implementations are `TelegramNotifier` + `CcxtOrderPlacer` in production,
+or `LogNotifier` + `StubOrderPlacer` for tests and signal-only runs.
+
+Runtime mode hot-swap (`/mode signal_only|approval|auto`) is an open
+enhancement — currently you stop, edit `config.yaml`, and restart.
 
 ## Why ccxt instead of OKX-direct
 

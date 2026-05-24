@@ -409,7 +409,11 @@ class ExchangeClient:
             lambda: self._ccxt.create_order(sym, "market", side, amount, None, p),
             op=f"create_market_order {sym} {side} {amount}",
         )
-        return _order_from_ccxt(o, reduce_only=reduce_only)
+        return _order_from_ccxt(
+            o, reduce_only=reduce_only,
+            fallback_side=side, fallback_type="market", fallback_amount=amount,
+            fallback_symbol=sym,
+        )
 
     async def create_limit_order(
         self,
@@ -430,7 +434,11 @@ class ExchangeClient:
             lambda: self._ccxt.create_order(sym, "limit", side, amount, price, p),
             op=f"create_limit_order {sym} {side} {amount}@{price}",
         )
-        return _order_from_ccxt(o, reduce_only=reduce_only)
+        return _order_from_ccxt(
+            o, reduce_only=reduce_only,
+            fallback_side=side, fallback_type="limit", fallback_amount=amount,
+            fallback_symbol=sym,
+        )
 
     async def cancel_order(self, order_id: str, symbol: str) -> None:
         self._require_auth("cancel_order")
@@ -523,13 +531,24 @@ class ExchangeClient:
 # ──────────────────────────────────────────────────────────────────────
 
 
-def _order_from_ccxt(o: dict[str, Any], *, reduce_only: bool) -> OrderInfo:
+def _order_from_ccxt(
+    o: dict[str, Any],
+    *,
+    reduce_only: bool,
+    fallback_side: Optional[str] = None,
+    fallback_type: Optional[str] = None,
+    fallback_amount: Optional[float] = None,
+    fallback_symbol: Optional[str] = None,
+) -> OrderInfo:
+    # Bybit's create_order response is sparse — only id + clientOrderId are
+    # populated (the unified parser leaves side/type/amount as None until a
+    # follow-up fetch_order). Backfill from the request when we have them.
     return OrderInfo(
         id=str(o["id"]),
-        symbol=o["symbol"],
-        side=o["side"],
-        type=o["type"],
-        amount=float(o.get("amount") or 0.0),
+        symbol=o.get("symbol") or fallback_symbol or "",
+        side=o.get("side") or fallback_side,
+        type=o.get("type") or fallback_type or "market",
+        amount=float(o.get("amount") or fallback_amount or 0.0),
         price=(float(o["price"]) if o.get("price") is not None else None),
         filled=float(o.get("filled") or 0.0),
         status=o.get("status") or "open",

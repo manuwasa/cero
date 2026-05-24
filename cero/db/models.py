@@ -204,6 +204,25 @@ class Signal(Base):
 # ──────────────────────────────────────────────────────────────────────
 
 
+class TripEvent(Base):
+    """Audit log of every TRIP fire. Persisted so the dashboard can show
+    history and `/reset` only un-trips the most recent active row. The
+    `cleared_at` column is null while the trip is active and gets set when
+    the user explicitly resets — never auto-resets (see docs/ARCHITECTURE.md)."""
+
+    __tablename__ = "trips"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    fired_at: Mapped[int] = mapped_column(BigInteger, nullable=False, index=True)
+    reason: Mapped[str] = mapped_column(String(32), nullable=False)
+    # 'manual' | 'daily_loss' | 'consecutive_losses' | 'exchange_errors'
+    # | 'unexpected_position' | 'other'
+    detail: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    cleared_at: Mapped[Optional[int]] = mapped_column(BigInteger, nullable=True)
+    cleared_by: Mapped[Optional[str]] = mapped_column(String(32), nullable=True)
+    # 'user' | 'restart' | None
+
+
 class NewsItem(Base):
     """One scraped headline or tweet. `(source, source_id)` is unique so the
     scraper can dedupe without a separate seen-set."""

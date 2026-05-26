@@ -105,6 +105,20 @@ async def main() -> None:
         "--candle-tf", default="5m",
         help="which candle timeframe to use for resolution (default 5m)",
     )
+    parser.add_argument(
+        "--slippage-pct", type=float, default=0.1,
+        help="slippage as percent of entry price applied to each fill "
+             "(default 0.1%). Subtracted from r_multiple per trade.",
+    )
+    parser.add_argument(
+        "--fee-pct", type=float, default=0.06,
+        help="taker fee per leg as percent of notional (default 0.06%% — "
+             "bybit perp taker rate). 2 legs per trade (entry + exit).",
+    )
+    parser.add_argument(
+        "--no-costs", action="store_true",
+        help="show ideal-world numbers without slippage/fees (the old behavior)",
+    )
     args = parser.parse_args()
 
     tiers = [t.strip() for t in args.tier.split(",")]
@@ -188,6 +202,19 @@ async def main() -> None:
             result, bars, r_mult = _resolve(
                 sig.direction, entry, sl, tp, candles, actual_rr,
             )
+            # Apply realistic execution costs unless --no-costs was passed.
+            # Costs subtract from r_mult regardless of outcome (you pay on
+            # every trade, win or lose).
+            if not args.no_costs and result in ("win", "loss"):
+                stop_dist = abs(entry - sl)
+                # Slippage: applied on both legs (entry + exit). Expressed in
+                # absolute price, then converted to R units.
+                slip_per_leg = entry * (args.slippage_pct / 100)
+                slippage_r = (slip_per_leg * 2) / stop_dist if stop_dist > 0 else 0
+                # Fees: same idea — percent of notional, applied twice.
+                fees_per_leg = entry * (args.fee_pct / 100)
+                fees_r = (fees_per_leg * 2) / stop_dist if stop_dist > 0 else 0
+                r_mult -= (slippage_r + fees_r)
             outcomes.append(Outcome(
                 signal_id=sig.id, symbol=sig.symbol, tier=sig.tier,
                 direction=sig.direction, score=sig.score, ts=sig.ts,
@@ -298,11 +325,17 @@ async def main() -> None:
     else:
         print("OVERALL: gate NOT passed yet. Keep collecting trades.")
     print()
-    print("Notes:")
-    print("  - Does not model slippage, fees, or partial fills (real results "
-          "will be 0.2-1% worse per trade).")
-    print("  - Uses simplified 1% stop distance (real signals use ATR-clamped "
-          "0.3-3%). For accurate backtest, persist entry/sl/tp on Signal rows.")
+    print("Costs modeled:")
+    if args.no_costs:
+        print("  ⚠  --no-costs flag set: this is the IDEAL-WORLD number.")
+        print("     Real auto-trading will be 0.2-0.5% worse per trade.")
+    else:
+        print(f"  slippage: {args.slippage_pct}% per fill × 2 legs")
+        print(f"  fees:     {args.fee_pct}% per fill × 2 legs (bybit taker)")
+        print(f"  partial fills not modeled — testnet's thin liquidity will")
+        print(f"  make real auto-mode outcomes slightly worse still.")
+    print()
+    print("Run with --no-costs to compare against the ideal-world number.")
 
 
 if __name__ == "__main__":

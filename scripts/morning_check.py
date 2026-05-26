@@ -96,9 +96,19 @@ async def main() -> None:
             .order_by(asc(Signal.ts))
         )).scalars().all()
 
+        # Cost assumptions for the "realistic" line (matches backtest_signals.py defaults)
+        SLIPPAGE_PCT = 0.1   # 0.1% per leg
+        FEE_PCT = 0.06       # 0.06% per leg (bybit taker)
+
         wins = losses = incomplete = 0
         gross_w = gross_l = 0.0
-        decided_sorted: list[str] = []   # 'win' or 'loss' in order
+        gross_w_real = gross_l_real = 0.0    # cost-adjusted
+        decided_sorted: list[str] = []
+        # Per-tier and per-symbol tallies for the breakdown table
+        from collections import defaultdict
+        by_tier: dict[str, list[tuple[str, float]]] = defaultdict(list)
+        by_symbol: dict[str, list[tuple[str, float]]] = defaultdict(list)
+
         for sig in sigs:
             if sig.entry_price is None:
                 incomplete += 1
@@ -113,16 +123,30 @@ async def main() -> None:
                 .order_by(asc(Candle.open_time))
             )).scalars().all()
             result, r = _resolve(sig.direction, sig.entry_price, sig.stop_loss, sig.take_profit, candles)
+            # Realistic r: subtract slippage + fees regardless of outcome
+            r_real = r
+            if result in ("win", "loss"):
+                stop_dist = abs(sig.entry_price - sig.stop_loss)
+                if stop_dist > 0:
+                    cost_r = (sig.entry_price * (SLIPPAGE_PCT + FEE_PCT) / 100 * 2) / stop_dist
+                    r_real = r - cost_r
+
             if result == "win":
                 wins += 1
                 gross_w += r
-                decided_sorted.append("win")
+                gross_w_real += max(r_real, 0)   # if cost wipes out win, it's a loss
+                decided_sorted.append("win" if r_real > 0 else "loss")
             elif result == "loss":
                 losses += 1
                 gross_l += abs(r)
+                gross_l_real += abs(r_real)
                 decided_sorted.append("loss")
             else:
                 incomplete += 1
+                continue
+
+            by_tier[sig.tier].append((result, r_real))
+            by_symbol[sig.symbol].append((result, r_real))
 
     await close_db()
 
@@ -159,8 +183,37 @@ async def main() -> None:
     print(f"backtest (tier A/B, 24h horizon):")
     print(f"  decided:        {decided}W+L  ({wins}W / {losses}L, {incomplete} incomplete)")
     if decided > 0:
-        print(f"  win rate:       {wr:.1f}%      total R: {total_r:+.2f}      PF: {pf:.2f}")
+        total_r_real = gross_w_real - gross_l_real
+        pf_real = (gross_w_real / gross_l_real) if gross_l_real > 0 else (float("inf") if gross_w_real > 0 else 0.0)
+        print(f"  ideal-world:    WR {wr:.1f}%   R {total_r:+.2f}   PF {pf:.2f}")
+        print(f"  realistic:      R {total_r_real:+.2f}   PF {pf_real:.2f}   "
+              f"(after 0.1% slippage + 0.06% fee per leg)")
     print()
+
+    # Per-tier breakdown
+    if by_tier:
+        print("by tier:")
+        for tier in ("A", "B"):
+            outs = by_tier.get(tier, [])
+            if not outs:
+                print(f"  {tier}: none")
+                continue
+            tw = sum(1 for r, _ in outs if r == "win")
+            twr = tw / len(outs) * 100
+            tr = sum(rv for _, rv in outs)
+            print(f"  {tier}: {len(outs):>3} trades, WR {twr:5.1f}%, total R {tr:+6.2f}")
+        print()
+
+    # Per-symbol breakdown
+    if by_symbol:
+        print("by symbol:")
+        for sym in sorted(by_symbol):
+            outs = by_symbol[sym]
+            sw = sum(1 for r, _ in outs if r == "win")
+            swr = sw / len(outs) * 100
+            sr = sum(rv for _, rv in outs)
+            print(f"  {sym:<22} {len(outs):>3} trades, WR {swr:5.1f}%, total R {sr:+6.2f}")
+        print()
     print(f"validation gate progress:")
     print(f"  count >= 200:   {check(pass_count):<5} ({decided}/200)")
     print(f"  WR    >= 55%:   {check(pass_wr):<5} ({pct(wr)})")

@@ -115,13 +115,15 @@ def test_aggregate_all_pass_yields_tier_a_long_full_size():
 
 
 def test_aggregate_tier_b_half_size():
-    # Drop c2 (18) + c4 (15) → 100 - 33 = 67 → B
+    # Drop c2 (market_structure, 18) + c3 (key_levels, 10) → 100 - 28 = 72 → B
+    # NOTE: poi_alert (c4, weight 15) MUST stay passing — it's the hard gate.
+    # Dropping it would downgrade to C regardless of score.
     results = _results_all(
-        pass_mask=[True, False, True, False, True, True, True, True],
+        pass_mask=[True, False, False, True, True, True, True, True],
         hints={"trend_h1_h4": "up"},
     )
     rep = aggregate(results, RISK)
-    assert rep.score == 67
+    assert rep.score == 72
     assert rep.tier == "B"
     assert rep.size_multiplier == 0.5
     assert rep.direction == "long"
@@ -162,3 +164,51 @@ def test_aggregate_records_passed_and_failed_names():
     rep = aggregate(results, RISK)
     assert set(rep.passed) == {"trend_h1_h4", "key_levels", "poi_alert", "structure_15m_30m", "ltf_poi"}
     assert set(rep.failed) == {"market_structure", "session_hl", "atr_room"}
+
+
+# ──────────────────────────────────────────────────────────────────────
+# Hard gate: poi_alert must pass for tier A/B
+# ──────────────────────────────────────────────────────────────────────
+
+
+def test_aggregate_downgrades_to_c_when_poi_alert_fails():
+    """Even with a tier-A score, if poi_alert didn't pass, tier becomes C
+    (no trade). This is the hard gate added after the Nov 2026 testnet
+    validation showed 7.4% WR when the strategy fired on trend+structure
+    confluence alone, without entry-precision confirmation."""
+    # Only poi_alert fails — score = 100 - 15 = 85 (would be tier A by score)
+    results = _results_all(
+        pass_mask=[True, True, True, False, True, True, True, True],
+        hints={"trend_h1_h4": "up"},
+    )
+    rep = aggregate(results, RISK)
+    assert rep.score == 85          # tier-A by score alone
+    assert rep.tier == "C"          # but downgraded to C by the gate
+    assert rep.size_multiplier == 0.0
+    assert rep.is_actionable is False
+
+
+def test_aggregate_b_score_downgrades_to_c_when_poi_alert_fails():
+    """B-score signals also downgrade if poi_alert fails."""
+    # Drop c1 (20) + c4 (15) = 35 → score 65 (tier B by score) but poi fails
+    results = _results_all(
+        pass_mask=[False, True, True, False, True, True, True, True],
+        hints={"market_structure": "up"},
+    )
+    rep = aggregate(results, RISK)
+    assert rep.score == 65
+    assert rep.tier == "C"
+    assert rep.size_multiplier == 0.0
+    assert rep.is_actionable is False
+
+
+def test_aggregate_c_or_below_unchanged_by_gate():
+    """The gate only downgrades A→C or B→C. C and D are unaffected."""
+    # Score 45 — tier C with poi_alert failing
+    results = _results_all(
+        pass_mask=[False, False, True, False, True, True, True, False],
+        hints={},
+    )
+    rep = aggregate(results, RISK)
+    assert rep.score == 39   # 10+5+12+12 = 39 → tier D
+    assert rep.tier == "D"   # gate has nothing to do here

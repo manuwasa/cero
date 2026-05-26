@@ -55,12 +55,36 @@ def score_to_tier(score: int, thresholds: dict[str, int]) -> Tier:
     return "D"
 
 
+# Criteria that must pass for tier A/B. Without these, the strategy's
+# "where to enter" check (POI confluence) is missing, so even a high score
+# from trend/structure criteria shouldn't graduate the signal past tier C.
+#
+# This is a hard gate, not a weight. Empirical justification: during the
+# Nov 2026 testnet validation, scoring-only tier B emitted ~50 signals/day
+# at 7.4% WR because trend/structure criteria pass on nearly every signal
+# while poi_alert / ltf_poi rarely fire. Without an entry-precision gate,
+# the system was effectively "trade whenever the trend looks right",
+# which loses ~78% of one R per trade.
+HARD_GATE_CRITERIA: tuple[str, ...] = ("poi_alert",)
+
+
 def aggregate(results: list[CriterionResult], risk_cfg: RiskConfig) -> ScoreReport:
     """Roll up all 8 results into a ScoreReport."""
     score = sum(r.score for r in results)
     tier = score_to_tier(score, risk_cfg.tier_thresholds)
-    size = risk_cfg.tier_sizing[tier]
     direction = infer_direction(results)
+
+    # Hard gate: tier A/B requires every name in HARD_GATE_CRITERIA to have
+    # passed. If any didn't, downgrade tier to max C (no trade).
+    if tier in ("A", "B"):
+        results_by_name = {r.name: r for r in results}
+        for required_name in HARD_GATE_CRITERIA:
+            r = results_by_name.get(required_name)
+            if r is None or not r.passed:
+                tier = "C"
+                break
+
+    size = risk_cfg.tier_sizing[tier]
 
     # If we can't pick a side, force size to 0 (don't trade) — even if the
     # tier alone would allow it. This is the "HTF flat" / "criteria disagree"

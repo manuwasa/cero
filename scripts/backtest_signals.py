@@ -90,6 +90,11 @@ async def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--symbol", default=None, help="filter to one symbol")
     parser.add_argument(
+        "--strategy", default=None,
+        help="filter to one strategy name (e.g. 'smc_trend', 'mean_reversion'). "
+             "Default: all strategies combined.",
+    )
+    parser.add_argument(
         "--tier", default="A,B",
         help="comma-separated tiers to evaluate (default A,B)",
     )
@@ -137,6 +142,8 @@ async def main() -> None:
         )
         if args.symbol:
             sig_q = sig_q.where(Signal.symbol == args.symbol)
+        if args.strategy:
+            sig_q = sig_q.where(Signal.strategy == args.strategy)
         signals = (await s.execute(sig_q)).scalars().all()
 
         if not signals:

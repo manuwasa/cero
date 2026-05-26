@@ -67,6 +67,12 @@ backfill_candles: 300
 # detection of fills or unexpected positions.
 account_poll_seconds: 10
 
+# Which strategy's signals actually trade. All registered strategies still
+# evaluate on every tick and persist their signals to the DB so you can compare
+# them via `python scripts/backtest_signals.py --strategy <name>`. Only this
+# one's signals reach the executor. Available: smc_trend, mean_reversion.
+primary_strategy: smc_trend
+
 # ──────────────────────────────────────────────────────────────────────
 # EXECUTION MODE
 # ──────────────────────────────────────────────────────────────────────

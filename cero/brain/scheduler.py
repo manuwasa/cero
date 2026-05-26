@@ -35,6 +35,7 @@ from cero.brain.indicators import atr
 from cero.brain.risk import RiskGate
 from cero.brain.scoring import aggregate
 from cero.brain.signals import Signal, build_signal, persist_signal
+from cero.brain.strategies import ALL_STRATEGIES, Strategy, StrategyContext
 from cero.config import Config
 from cero.data.calendar_worker import current_blackout
 from cero.data.exchange import Candle as CandleType
@@ -73,6 +74,7 @@ class BrainScheduler:
         *,
         trigger_tf: str = "5m",
         event_bus: Optional[EventBus] = None,
+        strategies: Optional[list[Strategy]] = None,
     ) -> None:
         self.cfg = cfg
         self.exchange = exchange
@@ -80,6 +82,10 @@ class BrainScheduler:
         self.mode_provider = mode_provider
         self.trigger_tf = trigger_tf
         self.bus = event_bus or default_bus
+        # All strategies evaluate on every tick; only signals from the one
+        # matching cfg.primary_strategy go to the executor. Others persist
+        # as shadow data for comparison.
+        self.strategies: list[Strategy] = strategies or list(ALL_STRATEGIES)
         self._tasks: list[asyncio.Task[None]] = []
         self._queues: list[tuple[str, asyncio.Queue]] = []
         self._stop = asyncio.Event()
@@ -149,24 +155,23 @@ class BrainScheduler:
                     pass
 
     async def _tick(self, symbol: str, _msg, log) -> None:
-        """One full brain pass for `symbol`."""
+        """One full brain pass for `symbol`. Runs every registered strategy
+        and persists each one's signal. Only signals from `primary_strategy`
+        are dispatched to the executor."""
         ctx = await self._build_context(symbol)
         if ctx is None or not ctx.candles:
             log.debug("skip: no candles in DB yet")
             return
 
-        report = aggregate(evaluate_all(ctx), self.cfg.risk)
         atr_h1 = self._atr_h1(ctx.candles)
-
         equity, open_positions = await self._account_inputs(symbol)
         today_pnl, consec = await self._trade_history()
         in_blackout, blackout_name = await current_blackout(
             ctx.now_ms, self.cfg.news,
         )
 
-        signal = build_signal(
-            ctx=ctx,
-            report=report,
+        strat_ctx = StrategyContext(
+            market=ctx,
             risk_gate=self.risk_gate,
             equity=equity,
             atr_h1=atr_h1,
@@ -176,26 +181,35 @@ class BrainScheduler:
             today_consecutive_losses=consec,
             in_blackout=in_blackout,
             blackout_name=blackout_name,
-            now_ms=ctx.now_ms,
         )
-        sig_id = await persist_signal(signal)
 
-        # Surface only meaningful evaluations to the executor: actionable
-        # signals always; non-actionable signals only when the score is in the
-        # near-actionable band (C or above) so the user sees the close calls
-        # without being spammed by D-tier noise.
-        if signal.is_actionable or signal.tier in ("A", "B", "C"):
-            await self.bus.publish(
-                "signal:new", {"signal_id": sig_id, "symbol": symbol}
+        for strategy in self.strategies:
+            try:
+                signal = await strategy.evaluate(strat_ctx)
+            except Exception as e:  # noqa: BLE001 — one strategy crash mustn't kill others
+                log.exception("strategy {} crashed: {}", strategy.name, e)
+                continue
+            if signal is None:
+                continue
+            sig_id = await persist_signal(signal)
+
+            # Only the primary strategy's signals reach the executor.
+            # Other strategies' signals accumulate as shadow data.
+            is_primary = (strategy.name == self.cfg.primary_strategy)
+            if is_primary and (signal.is_actionable or signal.tier in ("A", "B", "C")):
+                await self.bus.publish(
+                    "signal:new",
+                    {"signal_id": sig_id, "symbol": symbol, "strategy": strategy.name},
+                )
+                mode = self.mode_provider()
+                await mode.handle_signal(signal)
+
+            log.info(
+                "[{}] tier={} dir={} score={} size={:.6f} reason={!r}{}",
+                strategy.name, signal.tier, signal.direction, signal.score,
+                signal.size, signal.size_reason,
+                "" if is_primary else "  (shadow)",
             )
-            mode = self.mode_provider()
-            await mode.handle_signal(signal)
-
-        log.info(
-            "tier={} dir={} score={} size={:.6f} reason={!r}",
-            signal.tier, signal.direction, signal.score,
-            signal.size, signal.size_reason,
-        )
 
     # ── inputs ────────────────────────────────────────────────────────
 

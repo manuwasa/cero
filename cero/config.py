@@ -129,6 +129,11 @@ class Config(BaseModel):
     )
     backfill_candles: int = Field(default=300, ge=0, le=2000)
     account_poll_seconds: int = Field(default=10, ge=2, le=300)
+    # Which strategy's signals reach the executor. All registered strategies
+    # evaluate on every tick and persist their signals (so we can compare them
+    # in the backtester), but only this one trades. Valid values match
+    # cero/brain/strategies/__init__.py ALL_STRATEGIES names.
+    primary_strategy: str = Field(default="smc_trend")
     mode: Mode
     risk: RiskConfig
     criteria_weights: CriteriaWeights

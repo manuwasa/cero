@@ -104,10 +104,11 @@ async def main() -> None:
         gross_w = gross_l = 0.0
         gross_w_real = gross_l_real = 0.0    # cost-adjusted
         decided_sorted: list[str] = []
-        # Per-tier and per-symbol tallies for the breakdown table
+        # Per-tier, per-symbol, per-strategy tallies for breakdowns
         from collections import defaultdict
         by_tier: dict[str, list[tuple[str, float]]] = defaultdict(list)
         by_symbol: dict[str, list[tuple[str, float]]] = defaultdict(list)
+        by_strategy: dict[str, list[tuple[str, float]]] = defaultdict(list)
 
         for sig in sigs:
             if sig.entry_price is None:
@@ -147,6 +148,7 @@ async def main() -> None:
 
             by_tier[sig.tier].append((result, r_real))
             by_symbol[sig.symbol].append((result, r_real))
+            by_strategy[sig.strategy or "unknown"].append((result, r_real))
 
     await close_db()
 
@@ -189,6 +191,19 @@ async def main() -> None:
         print(f"  realistic:      R {total_r_real:+.2f}   PF {pf_real:.2f}   "
               f"(after 0.1% slippage + 0.06% fee per leg)")
     print()
+
+    # Per-strategy breakdown (most important for A/B comparison)
+    if by_strategy:
+        primary = cfg.primary_strategy
+        print("by strategy:")
+        for strat in sorted(by_strategy):
+            outs = by_strategy[strat]
+            sw = sum(1 for r, _ in outs if r == "win")
+            swr = sw / len(outs) * 100
+            sr = sum(rv for _, rv in outs)
+            tag = " (PRIMARY)" if strat == primary else " (shadow)"
+            print(f"  {strat:<18}{tag}  {len(outs):>3} trades, WR {swr:5.1f}%, R {sr:+6.2f}")
+        print()
 
     # Per-tier breakdown
     if by_tier:

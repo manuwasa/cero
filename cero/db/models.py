@@ -195,6 +195,12 @@ class Signal(Base):
     mode: Mapped[str] = mapped_column(String(16), nullable=False)
     # 'signal_only' | 'approval' | 'auto'
 
+    # Which strategy produced this signal. Used for A/B testing alternative
+    # strategies in parallel — only signals matching cfg.primary_strategy
+    # reach the executor; others accumulate as shadow data for comparison.
+    # Nullable for backwards compatibility with rows from before this column.
+    strategy: Mapped[Optional[str]] = mapped_column(String(32), nullable=True, index=True)
+
     criteria_json: Mapped[str] = mapped_column(Text, nullable=False, default="{}")
     notes: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
 

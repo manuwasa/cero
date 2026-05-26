@@ -48,6 +48,7 @@ class Signal(BaseModel):
     stop_loss: float
     take_profit: float
     mode: str                    # 'signal_only' | 'approval' | 'auto'
+    strategy: str = "smc_trend"  # which Strategy emitted this signal
     criteria_json: str = Field(default="[]")
     notes: Optional[str] = None
     # Reasoning for why we sized this trade as we did — surfaced in alerts.
@@ -118,6 +119,7 @@ def build_signal(
     blackout_name: Optional[str] = None,
     rr: float = 2.0,
     now_ms: Optional[int] = None,
+    strategy: str = "smc_trend",
 ) -> Signal:
     """Assemble a Signal from a brain report + risk inputs.
 
@@ -176,6 +178,7 @@ def build_signal(
         stop_loss=sl,
         take_profit=tp,
         mode=mode,
+        strategy=strategy,
         criteria_json=json.dumps(criteria_payload),
         size_reason=decision.reason,
         notes=None,
@@ -201,6 +204,7 @@ async def persist_signal(signal: Signal) -> int:
             stop_loss=signal.stop_loss,
             take_profit=signal.take_profit,
             mode=signal.mode,
+            strategy=signal.strategy,
             criteria_json=signal.criteria_json,
             notes=signal.notes,
             executed=False,

@@ -71,8 +71,12 @@ class SignalOnlyMode:
         self._log = logger.bind(mode=self.name)
 
     async def handle_signal(self, signal: Signal) -> None:
-        # Notify regardless of tier — the user wants to see ALL signals while
-        # learning. The notifier itself can filter by `signal.tier` if needed.
+        if not signal.is_actionable:
+            self._log.info(
+                "[{}] tier={} dir={} score={} — non-actionable, skipping notify",
+                signal.symbol, signal.tier, signal.direction, signal.score,
+            )
+            return
         await self.notifier.send_signal(signal)
         self._log.info(
             "[{}] tier={} dir={} score={} size={:.6f} entry={:.2f} sl={:.2f} tp={:.2f}",

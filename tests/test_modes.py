@@ -237,9 +237,9 @@ async def test_signal_only_mode_only_notifies():
     mode = SignalOnlyMode(notifier=notif)
     await mode.handle_signal(_signal())
     assert len(notif.signals) == 1
-    # Even non-actionable signals get surfaced
+    # Non-actionable signals are filtered out — kills Tier C/D spam.
     await mode.handle_signal(_signal(size=0, size_reason="tier=0"))
-    assert len(notif.signals) == 2
+    assert len(notif.signals) == 1
 
 
 async def test_approval_mode_places_on_approval():

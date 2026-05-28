@@ -40,7 +40,6 @@ symbols:
    - BTC/USDT:USDT
    - ETH/USDT:USDT
    - SOL/USDT:USDT
-   - BNB/USDT:USDT
 
 # Timeframes the price worker subscribes to per symbol.
 # Used by docs/CRITERIA.md criteria:
@@ -173,7 +172,7 @@ alerts:
    push_readiness_above_tier: B
 
    # When to alert
-   on_signal: true # new signal emitted
+   on_signal: false # was spamming — check morning_check.py for daily summary instead
    on_fill: true # order filled
    on_close: true # position closed
    on_trip: true # TRIP fired

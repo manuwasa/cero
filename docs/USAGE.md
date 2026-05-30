@@ -46,18 +46,72 @@ reasoning. The math is unforgiving but the discipline saves accounts.
 
 ## Starting and stopping
 
-```powershell
-uv run python -m cero
+```bash
+python -m cero            # with the venv active
+# or:  uv run python -m cero
 ```
 
-Boot takes ~5 seconds. You'll see initialization logs in your terminal, a
-"Cero online" message in Telegram, and the dashboard at
-[http://127.0.0.1:8765](http://127.0.0.1:8765).
+Boot takes ~5 seconds. Watch for two confirmation lines: `market data from
+mainnet` (real prices — see [Market data](#market-data-comes-from-mainnet))
+and `mode=… ` (your execution mode). You'll also get a "Cero online" message
+in Telegram and the dashboard at [http://127.0.0.1:8765](http://127.0.0.1:8765).
 
 **Ctrl+C** to shut down — Cero unwinds every worker cleanly, sends a
 "shutting down" notice to Telegram, and saves any pending DB writes. Avoid
-killing the process forcibly (Task Manager → End Task) because in-flight
-orders may not finish recording.
+killing the process forcibly because in-flight orders may not finish recording.
+
+### One-time: start on clean data
+
+Cero reads market data from **mainnet** even on testnet (testnet OHLCV is
+unreliable — SOL once printed 9,900). If your `data/cero.db` was filled by an
+older build that stored testnet candles, clear it once so the brain starts on
+real prices (Cero rebuilds it on boot):
+
+```bash
+mv data/cero.db data/cero_testnet_old.db   # keeps a backup
+```
+
+### Running 24/7 on a phone (Termux) — watchdog
+
+Termux may sleep or kill a long-running process. Two small helper scripts in
+the project root keep Cero alive: `start.sh` launches it and **auto-restarts**
+on any crash/exit; `stop.sh` stops it cleanly without restarting. They live
+only on the device (not tracked in git) — **this doc block is the canonical
+backup; recreate them from here if the device is reset.**
+
+`start.sh`:
+```bash
+#!/usr/bin/env bash
+set -u
+cd "$(dirname "$0")"
+PY=".venv/bin/python"; [ -x "$PY" ] || PY="python"   # use the venv automatically
+mkdir -p logs; rm -f .cero_stop; echo $$ > .cero_watchdog.pid
+command -v termux-wake-lock >/dev/null 2>&1 && termux-wake-lock
+trap 'rm -f .cero_watchdog.pid; command -v termux-wake-unlock >/dev/null 2>&1 && termux-wake-unlock' EXIT
+while [ ! -f .cero_stop ]; do
+  echo "$(date '+%F %T') starting cero" | tee -a logs/watchdog.log
+  "$PY" -m cero
+  [ -f .cero_stop ] && break          # clean stop requested → don't restart
+  echo "$(date '+%F %T') exited — restart in 5s" | tee -a logs/watchdog.log
+  sleep 5
+done
+rm -f .cero_stop
+```
+
+`stop.sh`:
+```bash
+#!/usr/bin/env bash
+set -u
+cd "$(dirname "$0")"
+touch .cero_stop                              # tell start.sh's loop to exit, not restart
+pkill -f "python -m cero" 2>/dev/null         # stop the bot (clean shutdown)
+[ -f .cero_watchdog.pid ] && kill "$(cat .cero_watchdog.pid)" 2>/dev/null
+echo "stop signal sent."
+```
+
+Run with `bash start.sh` / `bash stop.sh`. To survive closing the session,
+start inside tmux: `tmux new -s cero` → `bash start.sh` → detach with
+**Ctrl+b** then **d**. Reattach later with `tmux attach -t cero`.
 
 ---
 
@@ -68,15 +122,39 @@ orders may not finish recording.
 | Mode | Behavior | Order placer |
 | --- | --- | --- |
 | `signal_only` | Alert only, never trades | `StubOrderPlacer` (no network calls) |
-| `approval` | Asks via Telegram ✅/❌ buttons, 60s timeout | `CcxtOrderPlacer` (real) |
-| `auto` | Trades A/B-tier signals immediately | `CcxtOrderPlacer` (real) |
+| `paper` | Trades on PAPER vs live real prices — simulated fills, real PnL, **no money** | `PaperBroker` (no exchange orders) |
+| `approval` | Asks via Telegram ✅/❌ buttons, 60s timeout | `CcxtOrderPlacer` (**real money**) |
+| `auto` | Trades A/B-tier signals immediately | `CcxtOrderPlacer` (**real money**) |
 
-**Start in `signal_only`.** Watch for a few weeks. Compare signals to what
-you see on the chart. Only consider `approval` once you have a feel for when
-the brain is right vs wrong.
+**`paper` is the validation workhorse.** It runs the whole bot on real prices
+and tracks simulated PnL + equity with every risk gate armed (daily-loss cap,
+consecutive-loss TRIP, position limits) — so you learn whether a strategy
+actually makes money *before* a cent is at risk. Set `paper_equity` in
+`config.yaml` for the simulated account size.
+
+**Progression — earn each step:** `signal_only` → `paper` (until a strategy
+is profitable in paper over a meaningful run) → `approval` (small real money,
+you confirm each trade) → `auto`. Never skip to real money on an unvalidated
+strategy.
 
 Mode hot-swap at runtime is not yet wired (it's an open enhancement). For
 now, edit `config.yaml` and restart.
+
+---
+
+## Market data comes from mainnet
+
+Cero pulls **candles and tickers from mainnet** even when `exchange.testnet:
+true`, because testnet OHLCV is unreliable — illiquid books produce fantasy
+wicks (SOL has printed 9,900 and frozen at 1,372 while real SOL was ~$80),
+which silently poisons every signal. Trading orders still route to whatever
+`testnet` selects, so you keep a safe order venue while the brain reasons on
+real prices.
+
+Controlled by `exchange.market_data_testnet` in `config.yaml` (default
+`false` = mainnet data; no API keys needed — it's public). The boot log
+prints `market data from mainnet` (or `testnet`) so you can confirm at a
+glance.
 
 ---
 

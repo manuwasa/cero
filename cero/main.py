@@ -34,6 +34,7 @@ from cero.data.news_worker import NewsWorker
 from cero.data.price_worker import PriceWorker
 from cero.db.session import close_db, init_db
 from cero.exec.modes import (
+    AutoMode,
     ExecutionMode,
     LogNotifier,
     StubOrderPlacer,
@@ -41,6 +42,7 @@ from cero.exec.modes import (
     build_mode,
 )
 from cero.exec.orders import CcxtOrderPlacer
+from cero.exec.paper import PaperBroker
 from cero.exec.protocols import Notifier, OrderPlacer
 from cero.ui.telegram.bot import TelegramNotifier, build_notifier
 from cero.ui.web.server import build_app
@@ -92,6 +94,7 @@ class Cero:
         self.risk_gate: RiskGate | None = None
         self.notifier: Notifier | None = None
         self.placer: OrderPlacer | None = None
+        self.paper_broker: PaperBroker | None = None
         self.mode: ExecutionMode | None = None
         self.price_worker: PriceWorker | None = None
         self.account_worker: AccountWorker | None = None
@@ -130,19 +133,38 @@ class Cero:
             self.notifier = LogNotifier()
             logger.warning("Telegram not configured — using LogNotifier")
 
-        # 5. Placer — real ccxt placer in auto/approval; stub in signal_only
-        #    so a typo in config can't push a stray order.
-        if cfg.mode in ("approval", "auto"):
+        # 5+6. Placer + execution mode.
+        #   paper        -> PaperBroker (simulated fills + PnL on live prices),
+        #                   driven by AutoMode logic. NO real orders, ever.
+        #   approval/auto -> real CcxtOrderPlacer (live money).
+        #   signal_only  -> StubOrderPlacer (alerts only, no orders).
+        if cfg.mode == "paper":
+            self.paper_broker = PaperBroker(
+                cfg, self.risk_gate, self.notifier,
+                starting_equity=cfg.paper_equity,
+            )
+            self.placer = self.paper_broker
+            self.mode = AutoMode(
+                notifier=self.notifier, placer=self.placer, risk_gate=self.risk_gate,
+            )
+            self.paper_broker.start()
+            logger.info(
+                "mode=paper — PaperBroker simulating fills (equity={:.2f}, NO real money)",
+                cfg.paper_equity,
+            )
+        elif cfg.mode in ("approval", "auto"):
             self.placer = CcxtOrderPlacer(self.exchange)
+            self.mode = build_mode(
+                cfg.mode, notifier=self.notifier, placer=self.placer,
+                risk_gate=self.risk_gate,
+            )
         else:
             self.placer = StubOrderPlacer()
             logger.info("mode={} — using StubOrderPlacer (no real orders)", cfg.mode)
-
-        # 6. Mode (the strategy)
-        self.mode = build_mode(
-            cfg.mode, notifier=self.notifier, placer=self.placer,
-            risk_gate=self.risk_gate,
-        )
+            self.mode = build_mode(
+                cfg.mode, notifier=self.notifier, placer=self.placer,
+                risk_gate=self.risk_gate,
+            )
 
         # 7. Trip watcher — listens for trip:fired, cancels + closes
         self.trip_watcher = TripWatcher(
@@ -173,9 +195,13 @@ class Cero:
         self.news_worker = NewsWorker(cfg)
         self.news_worker.start()
 
-        # 9. Brain scheduler — fires on closed 5m bars
+        # 9. Brain scheduler — fires on closed 5m bars. In paper mode it sizes
+        #    against the simulated account equity instead of the exchange.
         self.scheduler = BrainScheduler(
             cfg, self.exchange, self.risk_gate, lambda: self.mode,  # type: ignore[arg-type]
+            equity_provider=(
+                (lambda: self.paper_broker.equity) if self.paper_broker else None
+            ),
         )
         self.scheduler.start()
 
@@ -206,6 +232,7 @@ class Cero:
         logger.info("shutting down ...")
         for label, coro in (
             ("scheduler",       self.scheduler.stop()        if self.scheduler else None),
+            ("paper_broker",    self.paper_broker.stop()     if self.paper_broker else None),
             ("account_worker",  self.account_worker.stop()   if self.account_worker else None),
             ("calendar_worker", self.calendar_worker.stop()  if self.calendar_worker else None),
             ("news_worker",     self.news_worker.stop()      if self.news_worker else None),

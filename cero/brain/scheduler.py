@@ -75,12 +75,14 @@ class BrainScheduler:
         trigger_tf: str = "5m",
         event_bus: Optional[EventBus] = None,
         strategies: Optional[list[Strategy]] = None,
+        equity_provider=None,      # optional callable -> float; used in paper mode
     ) -> None:
         self.cfg = cfg
         self.exchange = exchange
         self.risk_gate = risk_gate
         self.mode_provider = mode_provider
         self.trigger_tf = trigger_tf
+        self.equity_provider = equity_provider
         self.bus = event_bus or default_bus
         # All strategies evaluate on every tick; only signals from the one
         # matching cfg.primary_strategy go to the executor. Others persist
@@ -255,11 +257,18 @@ class BrainScheduler:
         Falls back to a conservative default if the exchange call fails so a
         flaky network blip doesn't poison the gate."""
         equity = 0.0
-        try:
-            bal = await self.exchange.fetch_balance()
-            equity = bal.equity
-        except Exception as e:  # noqa: BLE001
-            self._log.warning("fetch_balance failed in scheduler: {}", e)
+        if self.equity_provider is not None:
+            # Paper mode: equity comes from the simulated account, not the exchange.
+            try:
+                equity = float(self.equity_provider())
+            except Exception as e:  # noqa: BLE001
+                self._log.warning("equity_provider failed: {}", e)
+        else:
+            try:
+                bal = await self.exchange.fetch_balance()
+                equity = bal.equity
+            except Exception as e:  # noqa: BLE001
+                self._log.warning("fetch_balance failed in scheduler: {}", e)
 
         async with session_factory()() as s:
             count = (

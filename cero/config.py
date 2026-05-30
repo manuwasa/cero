@@ -25,7 +25,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 ExchangeName = Literal["okx", "bybit", "binance", "hyperliquid"]
 MarginMode = Literal["isolated", "cross"]
-Mode = Literal["signal_only", "approval", "auto"]
+Mode = Literal["signal_only", "approval", "auto", "paper"]
 Tier = Literal["A", "B", "C", "D"]
 ImpactLevel = Literal["low", "medium", "high"]
 LogLevel = Literal["DEBUG", "INFO", "WARNING", "ERROR"]
@@ -34,6 +34,11 @@ LogLevel = Literal["DEBUG", "INFO", "WARNING", "ERROR"]
 class ExchangeConfig(BaseModel):
     name: ExchangeName
     testnet: bool = True
+    # Market data (candles / ticker) source. Default False = pull market data from
+    # MAINNET even when trading on testnet, because testnet OHLCV is unreliable
+    # (fantasy wicks, frozen feeds) and corrupts the brain. Orders still route to
+    # whatever `testnet` selects. Set True only to force data from the order venue.
+    market_data_testnet: bool = False
     margin_mode: MarginMode = "isolated"
     leverage: int = Field(default=5, ge=1, le=100)
 
@@ -135,6 +140,9 @@ class Config(BaseModel):
     # cero/brain/strategies/__init__.py ALL_STRATEGIES names.
     primary_strategy: str = Field(default="smc_trend")
     mode: Mode
+    # Starting equity for `mode: paper` — the simulated account size the brain
+    # uses for position sizing. No real money involved.
+    paper_equity: float = Field(default=10_000.0, gt=0)
     risk: RiskConfig
     criteria_weights: CriteriaWeights
     news: NewsConfig = Field(default_factory=NewsConfig)

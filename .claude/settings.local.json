@@ -17,7 +17,24 @@
       "Bash(curl -s -w \"\\\\nstatus: %{http_code}  time: %{time_total}s\\\\n\" --max-time 15 \"https://api-testnet.bybit.com/v5/market/instruments-info?category=linear&limit=10\")",
       "Bash(curl -s -w \"status: %{http_code}  time: %{time_total}s\\\\n\" --max-time 10 \"https://api-testnet.bybit.com/v5/market/time\")",
       "Bash(curl -s -w \"status: %{http_code}  time: %{time_total}s\\\\n\" --max-time 10 \"https://api.bybit.com/v5/market/time\")",
-      "Bash(curl -s -o /dev/null -w \"google: %{http_code}  time: %{time_total}s\\\\n\" --max-time 5 \"https://www.google.com\")"
+      "Bash(curl -s -o /dev/null -w \"google: %{http_code}  time: %{time_total}s\\\\n\" --max-time 5 \"https://www.google.com\")",
+      "Bash(xargs grep -l \"morning_check\\\\|backtest\\\\|realistic\\\\|ideal-world\\\\|validation gate\")",
+      "Bash(uv run *)",
+      "Read(//c/Users/mekan/.ssh/**)",
+      "Bash(ssh -p 8022 -o BatchMode=yes -o ConnectTimeout=10 -o StrictHostKeyChecking=accept-new 192.168.0.3 \"ls -la ~/cero/data/*.db 2>/dev/null; echo '---'; du -h ~/cero/data/cero.db 2>/dev/null\")",
+      "Bash(rm -f ~/.ssh/cero_phone ~/.ssh/cero_phone.pub)",
+      "Bash(ssh-keygen -t ed25519 -f ~/.ssh/cero_phone -N \"\" -C \"claude-pc-to-phone\" -q)",
+      "Bash(scp -P 8022 -i ~/.ssh/cero_phone -o BatchMode=yes -o StrictHostKeyChecking=accept-new u0_a585@192.168.0.3:cero/data/cero.db /c/laragon/www/cero/data/cero_live.db)",
+      "Bash(PYTHONIOENCODING=utf-8 uv run python scripts/backfill_mainnet.py --days 45)",
+      "Bash(PYTHONIOENCODING=utf-8 uv run python -)",
+      "Bash(PYTHONIOENCODING=utf-8 uv run python scripts/backtest_mainnet.py --step-min 15)",
+      "Bash(PYTHONIOENCODING=utf-8 uv run python scripts/backtest_mainnet.py --sweep --step-min 15)",
+      "Bash(PYTHONIOENCODING=utf-8 uv run python scripts/baseline_compare.py --step-min 15)",
+      "Bash(PYTHONIOENCODING=utf-8 uv run python scripts/baseline_compare.py --step-min 15 --no-costs)",
+      "Bash(PYTHONIOENCODING=utf-8 uv run python scripts/signal_search.py)",
+      "Bash(PYTHONIOENCODING=utf-8 uv run python scripts/proto_meanrev.py)",
+      "Bash(PYTHONIOENCODING=utf-8 uv run python scripts/funding_analysis.py --days 180)",
+      "Bash(PYTHONIOENCODING=utf-8 uv run python scripts/funding_analysis.py --days 180 --symbols \"DOGE/USDT:USDT,XRP/USDT:USDT,AVAX/USDT:USDT,LINK/USDT:USDT,SUI/USDT:USDT,ARB/USDT:USDT,OP/USDT:USDT,1000PEPE/USDT:USDT,WIF/USDT:USDT,TON/USDT:USDT,SEI/USDT:USDT,ADA/USDT:USDT\")"
     ]
   }
 }

@@ -147,6 +147,7 @@ class MeanReversionStrategy:
             stop_loss=sl,
             take_profit=tp,
             mode=ctx.mode,
+            strategy=self.name,
             criteria_json=json.dumps([{
                 "strategy": "mean_reversion",
                 "setup": "upper_rejection" if direction == "short" else "lower_rejection",

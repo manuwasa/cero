@@ -15,6 +15,12 @@ exchange:
    # Use testnet first. Set to false only when you're certain.
    testnet: true
 
+   # Where MARKET DATA (candles/ticker) comes from. Leave false: Cero pulls
+   # real mainnet prices even while orders stay on testnet, because testnet
+   # OHLCV is garbage (SOL printed 9900 / froze at 1372 while real SOL was ~80)
+   # and corrupts every signal. Orders still follow `testnet` above.
+   market_data_testnet: false
+
    # Margin mode for perps. Options: isolated | cross
    # isolated: per-position margin; safer per-trade
    # cross:    shared margin pool; lower margin requirement, higher blow-up risk
@@ -75,13 +81,15 @@ primary_strategy: smc_trend
 # ──────────────────────────────────────────────────────────────────────
 # EXECUTION MODE
 # ──────────────────────────────────────────────────────────────────────
-# signal_only — Cero alerts you; you trade manually  ← START HERE
-# approval    — Cero asks for ✅/❌ before each trade
-# auto        — Cero trades autonomously within risk limits
+# signal_only — Cero alerts you; you trade manually
+# paper       — Cero trades on PAPER against live real prices (no real money) ← YOU ARE HERE
+# approval    — Cero asks for ✅/❌ before each REAL trade
+# auto        — Cero trades REAL money autonomously within risk limits
 #
-# DO NOT set this to "auto" until you have passed the validation gate.
-# See docs/VALIDATION.md.
-mode: signal_only
+# DO NOT set this to "approval" or "auto" (real money) until a strategy has
+# passed the validation gate in paper. Right now no strategy has an edge, so
+# paper is correct. See docs/VALIDATION.md.
+mode: paper
 
 # ──────────────────────────────────────────────────────────────────────
 # RISK MANAGEMENT

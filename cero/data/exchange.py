@@ -206,37 +206,58 @@ class ExchangeClient:
                 f"ccxt has no async/pro support for exchange '{self.exch_cfg.name}'"
             )
 
+        self._cls = cls
+        # Two ccxt clients, one job each:
+        #   _ccxt — orders + account (private). Sandboxed iff testnet.
+        #   _data — market data (public candles/ticker). Pulled from MAINNET even
+        #           when trading on testnet, because testnet OHLCV is garbage
+        #           (fantasy wicks, frozen feeds) that would poison the brain.
+        # When data and orders share the same venue, one client is reused.
+        self._ccxt = self._build_client(sandbox=self.exch_cfg.testnet, with_keys=True)
+        if self.exch_cfg.testnet and not self.exch_cfg.market_data_testnet:
+            self._data = self._build_client(sandbox=False, with_keys=False)
+            self._separate_data = True
+        else:
+            self._data = self._ccxt
+            self._separate_data = False
+
+        self._markets_loaded = False
+        self._log = logger.bind(
+            exchange=self.exch_cfg.name,
+            testnet=self.exch_cfg.testnet,
+            data="mainnet" if (self._separate_data or not self.exch_cfg.testnet) else "testnet",
+        )
+
+    # ── client construction ───────────────────────────────────────────
+
+    def _build_client(self, *, sandbox: bool, with_keys: bool):
+        """Construct one ccxt.pro client. `sandbox` selects testnet endpoints;
+        `with_keys` attaches API credentials (only the private order/account
+        client needs them — the public mainnet data client must NOT, since
+        testnet keys are invalid on mainnet)."""
         params: dict[str, Any] = {
             "enableRateLimit": True,
-            "options": {
-                # Bybit (and most perp exchanges) use 'swap' for USDT-margined perps.
-                "defaultType": "swap",
-            },
+            # Bybit (and most perp exchanges) use 'swap' for USDT-margined perps.
+            "options": {"defaultType": "swap"},
         }
-        if secrets.exchange_api_key:
-            params["apiKey"] = secrets.exchange_api_key
-            params["secret"] = secrets.exchange_api_secret
-        if secrets.exchange_passphrase:
-            params["password"] = secrets.exchange_passphrase
+        if with_keys and self._secrets.exchange_api_key:
+            params["apiKey"] = self._secrets.exchange_api_key
+            params["secret"] = self._secrets.exchange_api_secret
+            if self._secrets.exchange_passphrase:
+                params["password"] = self._secrets.exchange_passphrase
 
-        self._ccxt = cls(params)
-        if self.exch_cfg.testnet:
-            self._ccxt.set_sandbox_mode(True)
+        client = self._cls(params)
+        if sandbox:
+            client.set_sandbox_mode(True)
         # Bybit's load_markets calls fetchCurrencies → privateGetV5AssetCoinQueryInfo,
         # which needs the "Wallet" API permission. Cero doesn't need per-coin
         # deposit/withdraw metadata, so flip the `has` flag off — load_markets
-        # then makes only the public fetchMarkets call.
+        # then makes only the public fetchMarkets call. Also limit fetch_markets
+        # to 'linear' (USDT perps) — options endpoints are flaky and unused.
         if self.exch_cfg.name == "bybit":
-            self._ccxt.has["fetchCurrencies"] = False
-            # By default, bybit's fetch_markets pulls four categories: spot,
-            # linear (USDT perps), inverse, and option. Options endpoints on
-            # testnet are flaky and we only trade linear, so limit to that —
-            # cuts boot time and stops `load_markets` from retrying for
-            # 30 seconds when an unrelated category times out.
-            self._ccxt.options["fetchMarkets"] = ["linear"]
-
-        self._markets_loaded = False
-        self._log = logger.bind(exchange=self.exch_cfg.name, testnet=self.exch_cfg.testnet)
+            client.has["fetchCurrencies"] = False
+            client.options["fetchMarkets"] = ["linear"]
+        return client
 
     # ── lifecycle ─────────────────────────────────────────────────────
 
@@ -248,42 +269,56 @@ class ExchangeClient:
         await self.close()
 
     async def connect(self) -> None:
-        """Load markets so symbol validation / precision work. Idempotent."""
+        """Load markets so symbol validation / precision work. Idempotent.
+        Loads both the order client and (if separate) the mainnet data client."""
         if self._markets_loaded:
             return
-        self._install_threaded_resolver()
+        self._install_threaded_resolver(self._ccxt)
         await _retry(self._ccxt.load_markets, op="load_markets")
+        if self._separate_data:
+            self._install_threaded_resolver(self._data)
+            await _retry(self._data.load_markets, op="load_markets(data)")
         self._markets_loaded = True
-        self._log.info("connected: {} markets loaded", len(self._ccxt.markets))
+        self._log.info(
+            "connected: {} markets loaded (market data from {})",
+            len(self._ccxt.markets),
+            "mainnet" if (self._separate_data or not self.exch_cfg.testnet) else "testnet",
+        )
 
-    def _install_threaded_resolver(self) -> None:
-        """Replace ccxt's aiohttp session with one that uses aiohttp's
+    def _install_threaded_resolver(self, client) -> None:
+        """Replace a ccxt client's aiohttp session with one that uses aiohttp's
         ThreadedResolver instead of aiodns.
 
         aiodns is a hard dependency of ccxt but on Windows its default config
         sometimes fails to detect system DNS servers, producing a misleading
         'Could not contact DNS servers' error. The threaded resolver delegates
         to the OS via getaddrinfo, which Just Works."""
-        self._ccxt.open()  # sets ssl_context, asyncio_loop, and a default session
-        if self._ccxt.session is not None:
+        client.open()  # sets ssl_context, asyncio_loop, and a default session
+        if client.session is not None:
             # ccxt already created an aiodns-backed session in open(); swap it.
-            old = self._ccxt.session
-            self._ccxt.tcp_connector = aiohttp.TCPConnector(
-                ssl=self._ccxt.ssl_context,
+            old = client.session
+            client.tcp_connector = aiohttp.TCPConnector(
+                ssl=client.ssl_context,
                 resolver=aiohttp.ThreadedResolver(),
                 enable_cleanup_closed=True,
             )
-            self._ccxt.session = aiohttp.ClientSession(
-                connector=self._ccxt.tcp_connector,
-                trust_env=self._ccxt.aiohttp_trust_env,
+            client.session = aiohttp.ClientSession(
+                connector=client.tcp_connector,
+                trust_env=client.aiohttp_trust_env,
             )
             asyncio.create_task(old.close())
 
     async def close(self) -> None:
-        try:
-            await self._ccxt.close()
-        except Exception as e:  # noqa: BLE001
-            self._log.warning("error closing ccxt session: {}", e)
+        # Close both clients; dedupe by identity in case data reuses the order client.
+        seen: set[int] = set()
+        for client in (self._ccxt, self._data):
+            if id(client) in seen:
+                continue
+            seen.add(id(client))
+            try:
+                await client.close()
+            except Exception as e:  # noqa: BLE001
+                self._log.warning("error closing ccxt session: {}", e)
 
     @property
     def authenticated(self) -> bool:
@@ -310,7 +345,7 @@ class ExchangeClient:
     ) -> list[Candle]:
         sym = self.normalize_symbol(symbol)
         rows = await _retry(
-            lambda: self._ccxt.fetch_ohlcv(sym, timeframe, since=since, limit=limit),
+            lambda: self._data.fetch_ohlcv(sym, timeframe, since=since, limit=limit),
             op=f"fetch_ohlcv {sym} {timeframe}",
         )
         return [
@@ -329,7 +364,7 @@ class ExchangeClient:
 
     async def fetch_ticker(self, symbol: str) -> Ticker:
         sym = self.normalize_symbol(symbol)
-        t = await _retry(lambda: self._ccxt.fetch_ticker(sym), op=f"fetch_ticker {sym}")
+        t = await _retry(lambda: self._data.fetch_ticker(sym), op=f"fetch_ticker {sym}")
         return Ticker(
             symbol=sym,
             last=float(t["last"]),
@@ -528,7 +563,7 @@ class ExchangeClient:
         wants closed bars."""
         sym = self.normalize_symbol(symbol)
         while True:
-            rows = await self._ccxt.watch_ohlcv(sym, timeframe)
+            rows = await self._data.watch_ohlcv(sym, timeframe)
             for r in rows:
                 yield Candle(
                     symbol=sym,

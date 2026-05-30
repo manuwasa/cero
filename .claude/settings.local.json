@@ -34,7 +34,11 @@
       "Bash(PYTHONIOENCODING=utf-8 uv run python scripts/signal_search.py)",
       "Bash(PYTHONIOENCODING=utf-8 uv run python scripts/proto_meanrev.py)",
       "Bash(PYTHONIOENCODING=utf-8 uv run python scripts/funding_analysis.py --days 180)",
-      "Bash(PYTHONIOENCODING=utf-8 uv run python scripts/funding_analysis.py --days 180 --symbols \"DOGE/USDT:USDT,XRP/USDT:USDT,AVAX/USDT:USDT,LINK/USDT:USDT,SUI/USDT:USDT,ARB/USDT:USDT,OP/USDT:USDT,1000PEPE/USDT:USDT,WIF/USDT:USDT,TON/USDT:USDT,SEI/USDT:USDT,ADA/USDT:USDT\")"
+      "Bash(PYTHONIOENCODING=utf-8 uv run python scripts/funding_analysis.py --days 180 --symbols \"DOGE/USDT:USDT,XRP/USDT:USDT,AVAX/USDT:USDT,LINK/USDT:USDT,SUI/USDT:USDT,ARB/USDT:USDT,OP/USDT:USDT,1000PEPE/USDT:USDT,WIF/USDT:USDT,TON/USDT:USDT,SEI/USDT:USDT,ADA/USDT:USDT\")",
+      "Bash(git add *)",
+      "Bash(git update-index *)",
+      "Bash(git commit *)",
+      "Bash(git push *)"
     ]
   }
 }

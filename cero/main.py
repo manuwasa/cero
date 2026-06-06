@@ -36,6 +36,7 @@ from cero.db.session import close_db, init_db
 from cero.exec.modes import (
     AutoMode,
     ExecutionMode,
+    FilteredNotifier,
     LogNotifier,
     StubOrderPlacer,
     TripWatcher,
@@ -93,6 +94,7 @@ class Cero:
         self.exchange: ExchangeClient | None = None
         self.risk_gate: RiskGate | None = None
         self.notifier: Notifier | None = None
+        self._notifier_impl: Notifier | None = None   # raw (unwrapped) for lifecycle
         self.placer: OrderPlacer | None = None
         self.paper_broker: PaperBroker | None = None
         self.mode: ExecutionMode | None = None
@@ -127,11 +129,14 @@ class Cero:
             services=services, backup_chat_id=secrets.telegram_chat_id_2,
         )
         if tg is not None:
-            self.notifier = tg
+            self._notifier_impl = tg
             await tg.start()
         else:
-            self.notifier = LogNotifier()
+            self._notifier_impl = LogNotifier()
             logger.warning("Telegram not configured — using LogNotifier")
+        # Wrap so config.alerts is actually honored (e.g. on_signal=false stops
+        # the per-signal spam). The raw impl is kept for start/stop lifecycle.
+        self.notifier = FilteredNotifier(self._notifier_impl, cfg.alerts)
 
         # 5+6. Placer + execution mode.
         #   paper        -> PaperBroker (simulated fills + PnL on live prices),
@@ -267,12 +272,13 @@ class Cero:
                     self._web_task.cancel()
 
     async def _stop_notifier(self) -> None:
-        if isinstance(self.notifier, TelegramNotifier):
+        impl = self._notifier_impl
+        if isinstance(impl, TelegramNotifier):
             try:
-                await self.notifier.send_notice("Cero shutting down")
+                await impl.send_notice("Cero shutting down")
             except Exception:  # noqa: BLE001
                 pass
-            await self.notifier.stop()
+            await impl.stop()
 
     async def wait_for_shutdown(self) -> None:
         await self._stop_event.wait()

@@ -165,10 +165,11 @@ class PaperBroker:
             "PAPER OPEN {} {} size={:.6f} entry={:.4f} sl={:.4f} tp={:.4f}",
             pos.symbol, pos.side, pos.size, pos.entry, pos.sl, pos.tp,
         )
-        await self.notifier.send_notice(
-            f"[PAPER] open {pos.side} {pos.symbol} @ {pos.entry:.4f} "
-            f"(sl {pos.sl:.4f} / tp {pos.tp:.4f})"
-        )
+        if self.cfg.alerts.on_fill:
+            await self.notifier.send_notice(
+                f"[PAPER] open {pos.side} {pos.symbol} @ {pos.entry:.4f} "
+                f"(sl {pos.sl:.4f} / tp {pos.tp:.4f})"
+            )
         return f"paper-{pos.opened_at}"
 
     async def cancel_all_for(self, symbol: str) -> None:
@@ -230,9 +231,10 @@ class PaperBroker:
             "PAPER CLOSE {} {} @ {:.4f} ({}) pnl={:+.2f} equity={:.2f} consec_losses={}",
             pos.symbol, pos.side, exit_price, reason, pnl, self._equity, self._consec_losses,
         )
-        await self.notifier.send_notice(
-            f"[PAPER] close {pos.symbol} ({reason}) pnl={pnl:+.2f} → equity {self._equity:.2f}"
-        )
+        if self.cfg.alerts.on_close:
+            await self.notifier.send_notice(
+                f"[PAPER] close {pos.symbol} ({reason}) pnl={pnl:+.2f} → equity {self._equity:.2f}"
+            )
         await self.bus.publish("paper:close", {"symbol": pos.symbol, "pnl": pnl})
         await self._maybe_trip(now_ms)
 

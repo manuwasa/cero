@@ -27,6 +27,7 @@ from sqlalchemy import update
 
 from cero.brain.risk import RiskGate
 from cero.brain.signals import Signal
+from cero.config import AlertsConfig
 from cero.db.models import Signal as SignalRow
 from cero.db.session import session_factory
 from cero.events import EventBus, bus as default_bus
@@ -309,3 +310,32 @@ class StubOrderPlacer:
     async def close_position(self, symbol: str) -> None:
         self.closed.append(symbol)
         self._log.info("CLOSE  {}", symbol)
+
+
+# ──────────────────────────────────────────────────────────────────────
+# Alert filtering — makes config.alerts actually take effect
+# ──────────────────────────────────────────────────────────────────────
+
+
+class FilteredNotifier:
+    """Wraps any Notifier and drops alerts disabled in `config.alerts`.
+
+    Gates per-signal alerts via `on_signal` (the "information only" stream —
+    a message for every tier-C+ signal on every bar). Free-form notices pass
+    through: fills/closes are gated at their call sites (by on_fill/on_close),
+    and trips/errors always send. This is what makes the alerts config real;
+    before this, every flag was ignored."""
+
+    def __init__(self, inner: Notifier, alerts: AlertsConfig) -> None:
+        self._inner = inner
+        self._alerts = alerts
+
+    async def send_signal(self, signal: Signal) -> None:
+        if self._alerts.on_signal:
+            await self._inner.send_signal(signal)
+
+    async def send_notice(self, text: str) -> None:
+        await self._inner.send_notice(text)
+
+    async def request_approval(self, signal: Signal, timeout_s: float) -> bool:
+        return await self._inner.request_approval(signal, timeout_s)

@@ -177,9 +177,14 @@ class Cero:
         self.price_worker.start()
 
         # 8b. Account worker — polls balance + reconciles positions; TRIPs on
-        #     unexpected positions (requires creds, so skip with a warning if
-        #     keys are missing).
-        if self.exchange.authenticated:
+        #     unexpected positions (requires creds).
+        #     SKIPPED in paper mode: paper positions live only in the DB (never
+        #     on the exchange), so the reconciler would see them as "closed",
+        #     delete them, and write fake `exit_reason='other'` trades — which
+        #     corrupts paper results. The PaperBroker owns paper positions.
+        if cfg.mode == "paper":
+            logger.info("mode=paper — account_worker disabled (paper positions are local)")
+        elif self.exchange.authenticated:
             self.account_worker = AccountWorker(cfg, self.exchange, self.risk_gate)
             self.account_worker.start()
         else:

@@ -113,6 +113,31 @@ Run with `bash start.sh` / `bash stop.sh`. To survive closing the session,
 start inside tmux: `tmux new -s cero` → `bash start.sh` → detach with
 **Ctrl+b** then **d**. Reattach later with `tmux attach -t cero`.
 
+### Deploying an update from your laptop
+
+Cero runs on the phone, but you edit and commit on the laptop. To push a change
+live: SSH into the phone, then **stop → pull → start**:
+
+```bash
+ssh u0_a585@192.168.0.3 -p 8022      # your phone's Termux SSH: user@ip -p port
+source ~/cero/.venv/bin/activate     # optional for start/stop; handy for scripts
+cd ~/cero
+bash stop.sh
+git pull
+bash start.sh
+```
+
+Notes:
+- `u0_a585@192.168.0.3 -p 8022` are *your* device's SSH details. The IP changes
+  when the phone reconnects to Wi-Fi — check it with `ip addr` on the phone.
+- **Do NOT wipe the DB on a normal restart.** Only clear it for a fresh start or
+  after a fix that corrupted stored data (rare), and only once:
+  ```bash
+  mv data/cero.db data/cero_testnet_old.db   # ONE-TIME clean slate, then start.sh
+  ```
+  Wiping every restart deletes your paper history, so the strategy never gathers
+  enough trades to judge.
+
 ---
 
 ## The three modes

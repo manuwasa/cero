@@ -98,20 +98,23 @@ def main() -> None:
     grand = 0
     for symbol in symbols:
         for tf in tfs:
-            rows = fetch_paginated(ex, symbol, tf, start, now)
-            payload = [
-                (symbol, tf, int(r[0]), int(r[0]) + TF_MS[tf] - 1,
-                 float(r[1]), float(r[2]), float(r[3]), float(r[4]), float(r[5]))
-                for r in rows if r[0] >= start
-            ]
-            con.executemany(
-                "INSERT OR REPLACE INTO candles "
-                "(symbol,timeframe,open_time,close_time,open,high,low,close,volume) "
-                "VALUES (?,?,?,?,?,?,?,?,?)", payload,
-            )
-            con.commit()
-            grand += len(payload)
-            print(f"  {symbol:<18} {tf:<4} {len(payload):>6} bars")
+            try:
+                rows = fetch_paginated(ex, symbol, tf, start, now)
+                payload = [
+                    (symbol, tf, int(r[0]), int(r[0]) + TF_MS[tf] - 1,
+                     float(r[1]), float(r[2]), float(r[3]), float(r[4]), float(r[5]))
+                    for r in rows if r[0] >= start
+                ]
+                con.executemany(
+                    "INSERT OR REPLACE INTO candles "
+                    "(symbol,timeframe,open_time,close_time,open,high,low,close,volume) "
+                    "VALUES (?,?,?,?,?,?,?,?,?)", payload,
+                )
+                con.commit()
+                grand += len(payload)
+                print(f"  {symbol:<18} {tf:<4} {len(payload):>6} bars")
+            except Exception as e:  # noqa: BLE001 — skip symbols not on this exchange
+                print(f"  {symbol:<18} {tf:<4} SKIP ({repr(e)[:50]})")
     con.close()
     print(f"done. {grand} bars total -> {args.db}")
 

@@ -26,6 +26,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 ExchangeName = Literal["okx", "bybit", "binance", "hyperliquid"]
 MarginMode = Literal["isolated", "cross"]
 Mode = Literal["signal_only", "approval", "auto", "paper"]
+Engine = Literal["smc", "momentum"]
 Tier = Literal["A", "B", "C", "D"]
 ImpactLevel = Literal["low", "medium", "high"]
 LogLevel = Literal["DEBUG", "INFO", "WARNING", "ERROR"]
@@ -126,6 +127,31 @@ class LoggingConfig(BaseModel):
     keep_files: int = Field(default=5, ge=1)
 
 
+DEFAULT_MOMENTUM_UNIVERSE = [
+    "BTC/USDT:USDT", "ETH/USDT:USDT", "SOL/USDT:USDT", "BNB/USDT:USDT", "XRP/USDT:USDT",
+    "DOGE/USDT:USDT", "ADA/USDT:USDT", "AVAX/USDT:USDT", "LINK/USDT:USDT", "LTC/USDT:USDT",
+    "DOT/USDT:USDT", "ATOM/USDT:USDT", "NEAR/USDT:USDT", "APT/USDT:USDT", "ARB/USDT:USDT",
+    "OP/USDT:USDT", "SUI/USDT:USDT", "TON/USDT:USDT", "TRX/USDT:USDT", "FIL/USDT:USDT",
+    "ETC/USDT:USDT", "INJ/USDT:USDT", "SEI/USDT:USDT", "TIA/USDT:USDT", "RUNE/USDT:USDT",
+    "AAVE/USDT:USDT", "UNI/USDT:USDT", "GALA/USDT:USDT", "SAND/USDT:USDT", "AXS/USDT:USDT",
+    "GRT/USDT:USDT", "ALGO/USDT:USDT", "CRV/USDT:USDT", "LDO/USDT:USDT", "DYDX/USDT:USDT",
+    "1000PEPE/USDT:USDT", "WIF/USDT:USDT", "WLD/USDT:USDT", "STX/USDT:USDT", "IMX/USDT:USDT",
+    "HBAR/USDT:USDT", "ENA/USDT:USDT", "ORDI/USDT:USDT",
+]
+
+
+class MomentumSettings(BaseModel):
+    """Daily long/short cross-sectional momentum engine (cero/brain/momentum.py).
+    Active when Config.engine == 'momentum'. Universe defaults to the validated
+    ~40-coin basket; override here to change it."""
+    universe: list[str] = Field(default_factory=lambda: list(DEFAULT_MOMENTUM_UNIVERSE), min_length=6)
+    lookbacks: list[int] = Field(default_factory=lambda: [20, 30, 60])
+    frac: float = Field(default=0.30, gt=0, le=0.5)
+    rebalance_days: int = Field(default=5, ge=1)
+    paper_equity: float = Field(default=10_000.0, gt=0)
+    check_hours: int = Field(default=6, ge=1, le=48)
+
+
 class Config(BaseModel):
     exchange: ExchangeConfig
     symbols: list[str] = Field(min_length=1)
@@ -139,6 +165,9 @@ class Config(BaseModel):
     # in the backtester), but only this one trades. Valid values match
     # cero/brain/strategies/__init__.py ALL_STRATEGIES names.
     primary_strategy: str = Field(default="smc_trend")
+    # Which engine runs. 'smc' = original per-symbol intraday strategy (no proven
+    # edge). 'momentum' = daily long/short cross-sectional momentum portfolio.
+    engine: Engine = "smc"
     mode: Mode
     # Starting equity for `mode: paper` — the simulated account size the brain
     # uses for position sizing. No real money involved.
@@ -150,6 +179,7 @@ class Config(BaseModel):
     web: WebConfig = Field(default_factory=WebConfig)
     database: DatabaseConfig = Field(default_factory=DatabaseConfig)
     logging: LoggingConfig = Field(default_factory=LoggingConfig)
+    momentum: MomentumSettings = Field(default_factory=MomentumSettings)
 
 
 # ──────────────────────────────────────────────────────────────────────

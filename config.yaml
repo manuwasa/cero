@@ -79,7 +79,17 @@ account_poll_seconds: 10
 primary_strategy: smc_trend
 
 # ──────────────────────────────────────────────────────────────────────
-# EXECUTION MODE
+# ENGINE — which strategy Cero runs
+# ──────────────────────────────────────────────────────────────────────
+# momentum — daily long/short cross-sectional momentum across a ~40-coin
+#            basket (the validated edge). Runs once a day as a portfolio;
+#            always paper for now. THIS is the active strategy.
+# smc      — original per-symbol intraday strategy (kept for reference;
+#            no proven edge — don't rely on it).
+engine: momentum
+
+# ──────────────────────────────────────────────────────────────────────
+# EXECUTION MODE  (only used by the 'smc' engine; momentum is always paper)
 # ──────────────────────────────────────────────────────────────────────
 # signal_only — Cero alerts you; you trade manually
 # paper       — Cero trades on PAPER against live real prices (no real money) ← YOU ARE HERE

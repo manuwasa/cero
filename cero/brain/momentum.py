@@ -17,6 +17,7 @@ the ensemble, rebalance ~5d, and validate forward in paper before real money.
 """
 from __future__ import annotations
 
+import sqlite3
 from dataclasses import dataclass, field
 
 
@@ -70,6 +71,89 @@ def target_weights(closes: dict[str, list[float]], cfg: MomentumConfig) -> dict[
     for s in shorts:
         w[s] = -cfg.gross_per_side / k
     return w
+
+
+# ──────────────────────────────────────────────────────────────────────
+# Paper portfolio book — stateful, persisted. Shared by the daily script
+# (scripts/momentum_paper.py) and the in-process worker (momentum engine).
+# ──────────────────────────────────────────────────────────────────────
+
+_DAY_MS = 86_400_000
+
+
+class MomentumBook:
+    """Stateful long/short paper book. Call `update(closes, now_ms)` once per
+    day: it marks the held book to market, and if a rebalance is due (every
+    cfg.rebalance_days) trades the *difference* to the new target. All state
+    (equity, positions, trade log) persists to a sqlite file. No real orders."""
+
+    def __init__(self, cfg: MomentumConfig, db_path: str = "data/momentum_paper.db",
+                 start_equity: float = 10_000.0, cost: float = 0.001) -> None:
+        self.cfg = cfg
+        self.db_path = db_path
+        self.start_equity = start_equity
+        self.cost = cost
+        con = sqlite3.connect(self.db_path)
+        self._ensure(con)
+        con.close()
+
+    @staticmethod
+    def _ensure(con) -> None:
+        con.execute("CREATE TABLE IF NOT EXISTS mom_state (id INTEGER PRIMARY KEY, equity REAL, last_rebalance INTEGER, start_equity REAL)")
+        con.execute("CREATE TABLE IF NOT EXISTS mom_positions (symbol TEXT PRIMARY KEY, size REAL, last_price REAL)")
+        con.execute("CREATE TABLE IF NOT EXISTS mom_trades (ts INTEGER, symbol TEXT, side TEXT, qty REAL, price REAL, cost REAL)")
+        con.commit()
+
+    def update(self, closes: dict[str, list[float]], now_ms: int, do_rebalance: bool = True) -> dict:
+        prices = {s: c[-1] for s, c in closes.items() if c}
+        con = sqlite3.connect(self.db_path)
+        self._ensure(con)
+        st = con.execute("SELECT equity, last_rebalance, start_equity FROM mom_state WHERE id=1").fetchone()
+        equity, last_reb, start_eq = st if st else (self.start_equity, 0, self.start_equity)
+        positions = {s: (sz, lp) for s, sz, lp in con.execute("SELECT symbol, size, last_price FROM mom_positions")}
+
+        # 1. mark to market — equity moves by the P&L of held positions since last seen
+        day_pnl = sum(sz * (prices[s] - lp) for s, (sz, lp) in positions.items() if s in prices)
+        equity += day_pnl
+        positions = {s: (sz, prices.get(s, lp)) for s, (sz, lp) in positions.items()}
+
+        rebalanced = False
+        due = (now_ms - last_reb) >= self.cfg.rebalance_days * _DAY_MS
+        if do_rebalance and due:
+            w = target_weights(closes, self.cfg)
+            if w:
+                target = {s: w[s] * equity / prices[s] for s in w if s in prices}
+                cost_tot, new_pos = 0.0, {}
+                for s in set(positions) | set(target):
+                    cur = positions.get(s, (0.0, prices.get(s, 0.0)))[0]
+                    tgt = target.get(s, 0.0)
+                    if abs(tgt - cur) > 1e-12 and s in prices:
+                        qty = tgt - cur
+                        c = abs(qty) * prices[s] * self.cost
+                        cost_tot += c
+                        con.execute("INSERT INTO mom_trades VALUES (?,?,?,?,?,?)",
+                                    (now_ms, s, "buy" if qty > 0 else "sell", qty, prices[s], c))
+                    if abs(tgt) > 1e-12:
+                        new_pos[s] = (tgt, prices[s])
+                equity -= cost_tot
+                positions = new_pos
+                last_reb = now_ms
+                rebalanced = True
+
+        con.execute("INSERT OR REPLACE INTO mom_state (id, equity, last_rebalance, start_equity) VALUES (1,?,?,?)",
+                    (equity, last_reb, start_eq))
+        con.execute("DELETE FROM mom_positions")
+        con.executemany("INSERT INTO mom_positions VALUES (?,?,?)",
+                        [(s, sz, lp) for s, (sz, lp) in positions.items()])
+        con.commit()
+        con.close()
+
+        score = momentum_score(closes, self.cfg.lookbacks)
+        longs = sorted((s for s, (sz, _) in positions.items() if sz > 0), key=lambda s: -score.get(s, 0))
+        shorts = sorted((s for s, (sz, _) in positions.items() if sz < 0), key=lambda s: score.get(s, 0))
+        return {"equity": equity, "start_equity": start_eq, "day_pnl": day_pnl,
+                "rebalanced": rebalanced, "last_rebalance": last_reb,
+                "longs": longs, "shorts": shorts, "n_priced": len(prices)}
 
 
 # ── quick self-test / inspection: show today's target book from a DB ──────

@@ -44,6 +44,7 @@ from cero.exec.modes import (
 )
 from cero.exec.orders import CcxtOrderPlacer
 from cero.exec.paper import PaperBroker
+from cero.exec.momentum_worker import MomentumWorker
 from cero.exec.protocols import Notifier, OrderPlacer
 from cero.ui.telegram.bot import TelegramNotifier, build_notifier
 from cero.ui.web.server import build_app
@@ -97,6 +98,7 @@ class Cero:
         self._notifier_impl: Notifier | None = None   # raw (unwrapped) for lifecycle
         self.placer: OrderPlacer | None = None
         self.paper_broker: PaperBroker | None = None
+        self.momentum_worker: MomentumWorker | None = None
         self.mode: ExecutionMode | None = None
         self.price_worker: PriceWorker | None = None
         self.account_worker: AccountWorker | None = None
@@ -137,6 +139,29 @@ class Cero:
         # Wrap so config.alerts is actually honored (e.g. on_signal=false stops
         # the per-signal spam). The raw impl is kept for start/stop lifecycle.
         self.notifier = FilteredNotifier(self._notifier_impl, cfg.alerts)
+
+        # ENGINE = momentum: run the daily long/short portfolio worker instead of
+        # the intraday smc pipeline. Skips price worker / scheduler / paper broker;
+        # keeps the dashboard + notifier. (smc code stays in the repo, just unused.)
+        if cfg.engine == "momentum":
+            self.momentum_worker = MomentumWorker(cfg, self.exchange, self.notifier)
+            self.momentum_worker.start()
+            app = build_app(cfg, self.risk_gate, exchange=self.exchange)
+            uconfig = uvicorn.Config(
+                app, host=cfg.web.host, port=cfg.web.port,
+                log_level="warning", access_log=False,
+            )
+            self.web_server = uvicorn.Server(uconfig)
+            self._web_task = asyncio.create_task(self.web_server.serve(), name="web")
+            logger.info("dashboard at http://{}:{}", cfg.web.host, cfg.web.port)
+            logger.info(
+                "Cero up — engine=momentum (daily long/short paper), {} coins, rebalance {}d",
+                len(cfg.momentum.universe), cfg.momentum.rebalance_days,
+            )
+            await self.notifier.send_notice(
+                f"Cero online — momentum engine (paper, {len(cfg.momentum.universe)} coins)"
+            )
+            return
 
         # 5+6. Placer + execution mode.
         #   paper        -> PaperBroker (simulated fills + PnL on live prices),
@@ -242,6 +267,7 @@ class Cero:
         logger.info("shutting down ...")
         for label, coro in (
             ("scheduler",       self.scheduler.stop()        if self.scheduler else None),
+            ("momentum_worker", self.momentum_worker.stop()  if self.momentum_worker else None),
             ("paper_broker",    self.paper_broker.stop()     if self.paper_broker else None),
             ("account_worker",  self.account_worker.stop()   if self.account_worker else None),
             ("calendar_worker", self.calendar_worker.stop()  if self.calendar_worker else None),

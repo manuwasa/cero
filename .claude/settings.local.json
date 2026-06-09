@@ -38,7 +38,22 @@
       "Bash(git add *)",
       "Bash(git update-index *)",
       "Bash(git commit *)",
-      "Bash(git push *)"
+      "Bash(git push *)",
+      "Bash(scp -P 8022 -i ~/.ssh/cero_phone -o BatchMode=yes -o ConnectTimeout=10 -o StrictHostKeyChecking=accept-new u0_a585@192.168.0.3:cero/data/cero.db /c/laragon/www/cero/data/cero_live.db)",
+      "Bash(PYTHONIOENCODING=utf-8 uv run python -c \"from cero.brain.strategies import ALL_STRATEGIES; print\\('active strategies:', [s.name for s in ALL_STRATEGIES]\\)\")",
+      "Bash(PYTHONIOENCODING=utf-8 uv run python scripts/backfill_mainnet.py --db data/cero_research.db --days 720 --timeframes 1d --symbols \"BTC/USDT:USDT,ETH/USDT:USDT,SOL/USDT:USDT,BNB/USDT:USDT,XRP/USDT:USDT,DOGE/USDT:USDT,ADA/USDT:USDT,AVAX/USDT:USDT,LINK/USDT:USDT,LTC/USDT:USDT,DOT/USDT:USDT,ATOM/USDT:USDT,NEAR/USDT:USDT,APT/USDT:USDT,ARB/USDT:USDT,OP/USDT:USDT,SUI/USDT:USDT,TON/USDT:USDT\")",
+      "Bash(PYTHONIOENCODING=utf-8 uv run python scripts/signal_lab.py --db data/cero_research.db)",
+      "Bash(PYTHONIOENCODING=utf-8 uv run python scripts/backfill_mainnet.py --db data/cero_research_big.db --days 720 --timeframes 1d --symbols \"BTC/USDT:USDT,ETH/USDT:USDT,SOL/USDT:USDT,BNB/USDT:USDT,XRP/USDT:USDT,DOGE/USDT:USDT,ADA/USDT:USDT,AVAX/USDT:USDT,LINK/USDT:USDT,LTC/USDT:USDT,DOT/USDT:USDT,ATOM/USDT:USDT,NEAR/USDT:USDT,APT/USDT:USDT,ARB/USDT:USDT,OP/USDT:USDT,SUI/USDT:USDT,TON/USDT:USDT,TRX/USDT:USDT,FIL/USDT:USDT,ETC/USDT:USDT,INJ/USDT:USDT,SEI/USDT:USDT,TIA/USDT:USDT,RUNE/USDT:USDT,AAVE/USDT:USDT,UNI/USDT:USDT,GALA/USDT:USDT,SAND/USDT:USDT,AXS/USDT:USDT,GRT/USDT:USDT,ALGO/USDT:USDT,CRV/USDT:USDT,LDO/USDT:USDT,DYDX/USDT:USDT,1000PEPE/USDT:USDT,WIF/USDT:USDT,WLD/USDT:USDT,STX/USDT:USDT,IMX/USDT:USDT,HBAR/USDT:USDT,FET/USDT:USDT,ENA/USDT:USDT,ORDI/USDT:USDT\")",
+      "Bash(PYTHONIOENCODING=utf-8 uv run python scripts/signal_lab.py --db data/cero_research_big.db)",
+      "Bash(PYTHONIOENCODING=utf-8 uv run python scripts/signal_lab.py --db data/cero_research_big.db --cost 0.003)",
+      "Bash(PYTHONIOENCODING=utf-8 uv run python scripts/backfill_mainnet.py --exchange binance --db data/cero_research_binance.db --days 720 --timeframes 1d --symbols \"BTC/USDT:USDT,ETH/USDT:USDT,SOL/USDT:USDT,BNB/USDT:USDT,XRP/USDT:USDT,DOGE/USDT:USDT,ADA/USDT:USDT,AVAX/USDT:USDT,LINK/USDT:USDT,LTC/USDT:USDT,DOT/USDT:USDT,ATOM/USDT:USDT,NEAR/USDT:USDT,APT/USDT:USDT,ARB/USDT:USDT,OP/USDT:USDT,SUI/USDT:USDT,INJ/USDT:USDT,TIA/USDT:USDT,AAVE/USDT:USDT,UNI/USDT:USDT,FIL/USDT:USDT,WIF/USDT:USDT,1000PEPE/USDT:USDT\")",
+      "Bash(PYTHONIOENCODING=utf-8 uv run python scripts/signal_lab.py --db data/cero_research_binance.db)",
+      "Bash(PYTHONIOENCODING=utf-8 uv run python scripts/momentum_backtest.py --db data/cero_research_big.db)",
+      "Bash(PYTHONIOENCODING=utf-8 uv run python scripts/momentum_backtest.py --db data/cero_research_binance.db)",
+      "Bash(PYTHONIOENCODING=utf-8 uv run python -m cero.brain.momentum data/cero_research_big.db)",
+      "Bash(PYTHONIOENCODING=utf-8 uv run python scripts/momentum_paper.py)",
+      "Bash(PYTHONIOENCODING=utf-8 uv run python scripts/momentum_check.py)",
+      "Bash(python -m py_compile cero/ui/telegram/handlers.py)"
     ]
   }
 }

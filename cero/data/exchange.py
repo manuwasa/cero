@@ -401,6 +401,9 @@ class ExchangeClient:
             if not sym.endswith(suffix):          # unified linear perp: BASE/USDT:USDT
                 continue
             qv = t.get("quoteVolume")
+            if qv is None:                        # some venues (e.g. okx) only give baseVolume
+                bv, last = t.get("baseVolume"), t.get("last")
+                qv = float(bv) * float(last) if (bv and last) else None
             if qv is None or float(qv) < min_quote_volume:
                 continue
             rows.append((sym, float(qv)))

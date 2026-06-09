@@ -45,6 +45,13 @@ def register(dp: Dispatcher, services: dict, allowed_chat_ids: set[str]) -> None
     def reb_days() -> int:
         return cfg_obj.momentum.rebalance_days if cfg_obj is not None else 5
 
+    def universe_desc() -> str:
+        if cfg_obj is None:
+            return "momentum"
+        m = cfg_obj.momentum
+        return (f"auto top-{m.universe_size} liquid" if m.auto_universe
+                else f"{len(m.universe)} fixed coins")
+
     # ── /start, /help ────────────────────────────────────────────────
 
     @dp.message(Command("start"))
@@ -83,12 +90,17 @@ def register(dp: Dispatcher, services: dict, allowed_chat_ids: set[str]) -> None
         if momentum_mode():
             bk = read_book()
             lines = ["<b>cero status</b> — engine <code>momentum</code> (paper)"]
+            lines.append(f"  universe: {universe_desc()}, rebalance {reb_days()}d")
             if bk:
                 pct = (bk["equity"] / bk["start_equity"] - 1) * 100 if bk["start_equity"] else 0.0
                 lines.append(f"  equity <code>{bk['equity']:.2f}</code> ({pct:+.2f}%)  book {len(bk['longs'])}L/{len(bk['shorts'])}S")
                 if bk["last_rebalance"]:
                     days = int((datetime.now(timezone.utc).timestamp() * 1000 - bk["last_rebalance"]) / 86_400_000)
                     lines.append(f"  last rebalance {days}d ago — next in ~{max(0, reb_days() - days)}d")
+                longs = ", ".join(x.split("/")[0] for x in bk["longs"]) or "—"
+                shorts = ", ".join(x.split("/")[0] for x in bk["shorts"]) or "—"
+                lines.append(f"  <b>LONG</b>: {longs}")
+                lines.append(f"  <b>SHORT</b>: {shorts}")
             else:
                 lines.append("  book not started yet — engine hasn't rebalanced")
             if gate is not None and gate.tripped:

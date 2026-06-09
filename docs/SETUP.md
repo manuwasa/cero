@@ -273,74 +273,62 @@ Start button** (or send any message). Skipping this means Cero will get
 
 ## 6. Review `config.yaml`
 
-The defaults are sensible for learning. The fields most worth reviewing:
+Defaults are tuned for the momentum engine. The fields worth a look:
 
 ```yaml
 exchange:
-  name: bybit
-  testnet: true        # KEEP TRUE until you've passed the validation gate
-  leverage: 5          # max position size cap
+  name: binance          # your TRADING venue (for real orders, later)
+  data_exchange: bybit   # where CHART DATA comes from — must be reachable from
+                         # wherever Cero runs. Public data, no keys needed.
+  testnet: true          # keep true; momentum is paper for now
 
-symbols:
-  - BTC/USDT:USDT
-  - ETH/USDT:USDT
-  - SOL/USDT:USDT
+engine: momentum         # the active strategy (daily long/short momentum)
 
-mode: signal_only      # KEEP signal_only at first; alerts only, no trades
-
-risk:
-  base_risk_per_trade_pct: 0.5    # risk 0.5% of equity per trade
-  max_daily_loss_pct: 3.0         # auto-TRIP after losing 3% in one day
+momentum:
+  auto_universe: true    # auto-pick the most-liquid coins (no fixed list)
+  universe_size: 50
+  rebalance_days: 5
 ```
 
-Don't change the criteria weights yet — they sum to 100 and a validator
-will fail load if they don't. See `docs/CRITERIA.md` for what each does.
+For **paper you need no API keys** — chart data is public. Keys (in `.env`)
+only matter when you eventually trade real money on `name`.
 
 ---
 
 ## 7. First run
 
-```powershell
-uv run python -m cero
+```bash
+python -m cero            # with the venv active
+# or:  uv run python -m cero
 ```
 
-If you get `'uv' is not recognized as the name of a cmdlet...`, PATH isn't
-set up. See [Fixing uv on PATH](#fixing-uv-on-path) in step 2.
-
-You should see:
+A healthy momentum boot:
 
 ```
-INFO  Cero starting ...
-INFO  db ready: data/cero.db
-INFO  connected: 3426 markets loaded
-INFO  telegram: connected as @YourBot (id=...)
-INFO  price worker: started 18 streams (3 symbols x 6 timeframes)
-INFO  scheduler: started (3 symbols, trigger=5m)
-INFO  dashboard at http://127.0.0.1:8765
-INFO  Cero up — exchange=bybit testnet=True mode=signal_only
+connected: NN data markets — data from bybit, orders via binance
+momentum engine started — universe: auto (top-50 liquid), rebalance 5d, equity 10000
+Cero up — engine=momentum (daily long/short paper)
+auto-universe: NN liquid perps
+[MOM] equity 10000 (+0.0%) day +0 | 13L/13S  REBALANCED
 ```
 
-In Telegram: you'll receive "Cero online — bybit (testnet), mode=signal_only".
+Seeing `connected … data from bybit` and `[MOM] … REBALANCED` means it works.
+Telegram (if configured): "Cero online — momentum engine (paper, NN coins)".
+Dashboard: [http://127.0.0.1:8765](http://127.0.0.1:8765). **Ctrl+C** to stop.
 
-Open [http://127.0.0.1:8765](http://127.0.0.1:8765) in a browser — you'll
-see the dashboard with live balance, readiness per symbol, price chart, and
-the news feed.
-
-Press **Ctrl+C** to shut down. The shutdown logs a clean stop sequence.
+If boot fails on the data load, Bybit isn't reachable from this network — run
+where it is (home wifi / VPN), or change `data_exchange`.
 
 ---
 
 ## 8. What's next
 
-- **Watch for a few hours** in `signal_only`. Alerts arrive when the brain
-  scores a setup at tier C or higher. Compare them to what you see on the
-  chart — does the criterion breakdown make sense?
-- **Read `docs/USAGE.md`** for day-to-day operation: dashboard tour, Telegram
-  commands, when to TRIP.
-- **Read `docs/CRITERIA.md`** to understand exactly what each of the 8 checks
-  measures and how the tier comes out.
-- **Read `docs/VALIDATION.md`** for the 200-trade gate before you ever
-  consider flipping `mode: auto`. The math is real — don't skip it.
+- **Let it run (paper)** and glance daily: `scripts/momentum_check.py`, or
+  Telegram `/status` + `/book`.
+- **Run it 24/7 on your phone + deploy updates:** see
+  [`docs/USAGE.md`](USAGE.md) — the full run / deploy / operate guide.
+- It's a **modest, paper** edge — judge it over weeks, not days. Real money is a
+  deliberate later step (see USAGE.md).
 
 ---
 

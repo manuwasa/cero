@@ -164,7 +164,12 @@ class MomentumSettings(BaseModel):
 
 class Config(BaseModel):
     exchange: ExchangeConfig
-    symbols: list[str] = Field(min_length=1)
+    # smc-engine only (momentum uses its own auto-universe). Defaulted so it can
+    # be omitted from config.yaml.
+    symbols: list[str] = Field(
+        default_factory=lambda: ["BTC/USDT:USDT", "ETH/USDT:USDT", "SOL/USDT:USDT"],
+        min_length=1,
+    )
     timeframes: list[str] = Field(
         default_factory=lambda: ["5m", "15m", "30m", "1h", "4h", "1d"], min_length=1
     )
@@ -177,13 +182,16 @@ class Config(BaseModel):
     primary_strategy: str = Field(default="smc_trend")
     # Which engine runs. 'smc' = original per-symbol intraday strategy (no proven
     # edge). 'momentum' = daily long/short cross-sectional momentum portfolio.
-    engine: Engine = "smc"
-    mode: Mode
+    engine: Engine = "momentum"
+    mode: Mode = "paper"            # smc-engine only; momentum is always paper
     # Starting equity for `mode: paper` — the simulated account size the brain
     # uses for position sizing. No real money involved.
     paper_equity: float = Field(default=10_000.0, gt=0)
     risk: RiskConfig
-    criteria_weights: CriteriaWeights
+    # smc-engine only (the 8-criteria scoring). Defaulted so it can be omitted.
+    criteria_weights: CriteriaWeights = Field(default_factory=lambda: CriteriaWeights(
+        trend_h1_h4=20, market_structure=18, key_levels=10, poi_alert=15,
+        session_hl=5, structure_15m_30m=12, ltf_poi=12, atr_room=8))
     news: NewsConfig = Field(default_factory=NewsConfig)
     alerts: AlertsConfig = Field(default_factory=AlertsConfig)
     web: WebConfig = Field(default_factory=WebConfig)

@@ -1,102 +1,39 @@
-# Cero — strategy & runtime config
-# Secrets live in .env, NOT here.
+# Cero — config. Secrets live in .env, NOT here.
 
 # ──────────────────────────────────────────────────────────────────────
 # EXCHANGE
 # ──────────────────────────────────────────────────────────────────────
 exchange:
-   # ccxt exchange id. Common options:
-   #   - okx        (rich data, OKX symbols use BTC-USDT-SWAP format)
-   #   - bybit      (simple, widely used)
-   #   - binance    (largest, but US/SG restrictions)
-   #   - hyperliquid (on-chain perps)
-   name: binance
+   # ccxt exchange id: bybit | binance | okx | hyperliquid
+   name: binance              # your TRADING venue (for real orders, later)
 
-   # Use testnet first. Set to false only when you're certain.
+   # Keep true until a strategy is validated. (Momentum is always paper for now,
+   # so this only matters once you switch to real-money order modes.)
    testnet: true
 
-   # Where MARKET DATA (candles/ticker) comes from. Leave false: Cero pulls
-   # real mainnet prices even while orders stay on testnet, because testnet
-   # OHLCV is garbage (SOL printed 9900 / froze at 1372 while real SOL was ~80)
-   # and corrupts every signal. Orders still follow `testnet` above.
-   market_data_testnet: false
-
-   # Chart-data source — can be a DIFFERENT exchange than `name` (your trading
-   # venue). Trading targets binance; candles come from bybit (crypto-only perps
-   # = clean auto-universe, no tokenized stocks; validated). Public data, no keys.
-   # Set null to use `name`. (okx works too but mixes in tokenized stocks/gold.)
+   # Chart-data source — can be a DIFFERENT exchange than `name`. Trading targets
+   # binance; candles come from bybit (crypto-only perps = clean momentum
+   # universe, reachable, validated). Public data, no keys. null = use `name`.
+   # (okx works too but mixes tokenized stocks/gold into the universe.)
    data_exchange: bybit
 
-   # Margin mode for perps. Options: isolated | cross
-   # isolated: per-position margin; safer per-trade
-   # cross:    shared margin pool; lower margin requirement, higher blow-up risk
-   margin_mode: cross
+   # false = always pull mainnet prices even on testnet (testnet OHLCV is garbage).
+   market_data_testnet: false
 
-   # Default leverage. Keep LOW while learning.
-   # 1x  = no leverage, like spot
-   # 2x  = 2% move wipes margin only if you use full margin
-   # 10x = a 10% adverse move liquidates you
-   # Cero's risk math is BASED ON STOP LOSS DISTANCE, not leverage.
-   # Leverage here just determines max position size. Use 5x as default ceiling.
-   leverage: 5
-
-# ──────────────────────────────────────────────────────────────────────
-# SYMBOLS — what to watch and trade
-# ──────────────────────────────────────────────────────────────────────
-# Use ccxt unified format: BASE/QUOTE:SETTLEMENT
-# Examples:
-#   BTC/USDT:USDT  — BTC perp settled in USDT
-#   ETH/USDT:USDT  — ETH perp
-#   SOL/USDT:USDT  — SOL perp
-symbols:
-   - BTC/USDT:USDT
-   - ETH/USDT:USDT
-   - SOL/USDT:USDT
-
-# Timeframes the price worker subscribes to per symbol.
-# Used by docs/CRITERIA.md criteria:
-#   1h, 4h  → criterion 1 (HTF trend), 2 (structure), 8 (ATR room)
-#   15m, 30m → criterion 6 (LTF structure alignment)
-#   5m, 15m  → criterion 7 (LTF POI)
-#   1d       → daily high/low context for criteria 3, 8
-# Bandwidth scales with len(symbols) × len(timeframes) WebSocket subscriptions.
-timeframes:
-   - 5m
-   - 15m
-   - 30m
-   - 1h
-   - 4h
-   - 1d
-
-# How many historical bars to backfill per (symbol, timeframe) on startup
-# via REST before the live WebSocket stream takes over. The brain needs ~200
-# for 50-EMA + ATR(14) + swing structure; 300 gives headroom.
-backfill_candles: 300
-
-# How often the account worker polls balance + positions via REST.
-# Lower = more API calls but tighter sync; higher = less load but slower
-# detection of fills or unexpected positions.
-account_poll_seconds: 10
-
-# Which strategy's signals actually trade. All registered strategies still
-# evaluate on every tick and persist their signals to the DB so you can compare
-# them via `python scripts/backtest_signals.py --strategy <name>`. Only this
-# one's signals reach the executor. Available: smc_trend, mean_reversion.
-primary_strategy: smc_trend
+   margin_mode: cross         # isolated | cross  (real orders only)
+   leverage: 5                # max position-size leverage (real orders only)
 
 # ──────────────────────────────────────────────────────────────────────
 # ENGINE — which strategy Cero runs
 # ──────────────────────────────────────────────────────────────────────
-# momentum — daily long/short cross-sectional momentum across a ~40-coin
-#            basket (the validated edge). Runs once a day as a portfolio;
-#            always paper for now. THIS is the active strategy.
-# smc      — original per-symbol intraday strategy (kept for reference;
-#            no proven edge — don't rely on it).
+# momentum — daily long/short cross-sectional momentum; auto-discovers its
+#            universe (the validated edge). THIS is the active strategy. Paper.
+# smc      — old per-symbol intraday strategy (no proven edge; kept as a
+#            fallback — its settings default in code if you switch to it).
 engine: momentum
 
-# Momentum engine settings (used when engine: momentum).
 momentum:
-   auto_universe: true        # pick the most-liquid coins automatically (no fixed list)
+   auto_universe: true        # auto-pick the most-liquid coins (no fixed list)
    universe_size: 50          # consider the top-N perps by 24h volume
    min_volume_usd: 20000000   # liquidity floor — ignore coins below $20M/24h
    # lookbacks: [20, 30, 60]  # momentum windows (ensemble); defaults are fine
@@ -104,139 +41,59 @@ momentum:
    # paper_equity: 10000
 
 # ──────────────────────────────────────────────────────────────────────
-# EXECUTION MODE  (only used by the 'smc' engine; momentum is always paper)
-# ──────────────────────────────────────────────────────────────────────
-# signal_only — Cero alerts you; you trade manually
-# paper       — Cero trades on PAPER against live real prices (no real money) ← YOU ARE HERE
-# approval    — Cero asks for ✅/❌ before each REAL trade
-# auto        — Cero trades REAL money autonomously within risk limits
-#
-# DO NOT set this to "approval" or "auto" (real money) until a strategy has
-# passed the validation gate in paper. Right now no strategy has an edge, so
-# paper is correct. See docs/VALIDATION.md.
-mode: paper
-
-# ──────────────────────────────────────────────────────────────────────
 # RISK MANAGEMENT
+#   Used by the smc engine and the manual /trip kill-switch. Momentum is
+#   market-neutral and doesn't size off these yet.
 # ──────────────────────────────────────────────────────────────────────
 risk:
-   # Base risk per trade as % of equity
-   # 1.0  = standard
-   # 0.5  = conservative (recommended while learning)
-   # 2.0+ = aggressive (don't, until you have 500+ validated trades)
    base_risk_per_trade_pct: 0.5
-
-   # Daily loss cap. When today's losses exceed this %, TRIP fires.
    max_daily_loss_pct: 3.0
-
-   # Stop trading after N consecutive losses.
    max_consecutive_losses: 4
-
-   # Max simultaneous open positions across all symbols.
    max_concurrent_positions: 3
-
-   # Tier → sizing modifier. Multiplied with base_risk_per_trade_pct.
-   tier_sizing:
-      A: 1.0 # full risk
-      B: 0.5 # half risk
-      C: 0.0 # no trade
-      D: 0.0 # no trade
-
-   # Tier thresholds (score boundaries)
-   tier_thresholds:
-      A: 80 # score >= 80 → A
-      B: 60 # score >= 60 → B
-      C: 40 # score >= 40 → C (no trade)
-      # else D (no trade)
-
-# ──────────────────────────────────────────────────────────────────────
-# CRITERIA WEIGHTS
-# ──────────────────────────────────────────────────────────────────────
-# Must sum to 100. See docs/CRITERIA.md for what each means.
-criteria_weights:
-   trend_h1_h4: 20
-   market_structure: 18
-   key_levels: 10
-   poi_alert: 15
-   session_hl: 5
-   structure_15m_30m: 12
-   ltf_poi: 12
-   atr_room: 8
-
-# ──────────────────────────────────────────────────────────────────────
-# NEWS / EVENT BLACKOUT
-# ──────────────────────────────────────────────────────────────────────
-news:
-   # Block trading around high-impact news (CPI, FOMC, NFP, etc.)
-   blackout_minutes_before: 15
-   blackout_minutes_after: 15
-
-   # Which impact levels to blackout for. Options: low, medium, high
-   blackout_impacts:
-      - high
-      - medium
-
-   # Calendar sources. Free options only by default.
-   sources:
-      - forexfactory # scraped, free
-      # - tradingeconomics  # paid API
-
-   # RSS feeds the news_worker polls every ~15 min for crypto headlines.
-   # Items are stored in the `news` table and shown on the dashboard for
-   # context — they do NOT auto-trigger a blackout (that's the calendar's
-   # job). Add or swap freely; format is plain URL.
-   rss_feeds:
-      - https://cointelegraph.com/rss
-      - https://www.reddit.com/r/cryptocurrency/.rss
-
-   # Twitter accounts to monitor for breaking news (handled separately).
-   # Free Twitter API doesn't exist anymore; this list is parked here for
-   # when/if a scraping path becomes viable.
-   twitter_watchlist:
-      - WuBlockchain
-      - Cointelegraph
-      - DocumentingBTC
+   tier_sizing: { A: 1.0, B: 0.5, C: 0.0, D: 0.0 }
+   tier_thresholds: { A: 80, B: 60, C: 40 }
 
 # ──────────────────────────────────────────────────────────────────────
 # ALERTING (Telegram)
 # ──────────────────────────────────────────────────────────────────────
 alerts:
-   # Send a push alert when a symbol crosses this tier upward
-   push_readiness_above_tier: B
+   on_signal: false           # per-signal spam off; momentum notifies on rebalance
+   on_fill: true
+   on_close: true
+   on_trip: true
+   on_news_blackout: true
 
-   # When to alert
-   on_signal: false # was spamming — check morning_check.py for daily summary instead
-   on_fill: true # order filled
-   on_close: true # position closed
-   on_trip: true # TRIP fired
-   on_news_blackout: true # blackout starting/ending
+# ──────────────────────────────────────────────────────────────────────
+# NEWS / EVENT BLACKOUT (context only)
+# ──────────────────────────────────────────────────────────────────────
+news:
+   blackout_minutes_before: 15
+   blackout_minutes_after: 15
+   blackout_impacts: [high, medium]
+   sources: [forexfactory]
+   rss_feeds:
+      - https://cointelegraph.com/rss
+      - https://www.reddit.com/r/cryptocurrency/.rss
+   twitter_watchlist: [WuBlockchain, Cointelegraph, DocumentingBTC]
 
 # ──────────────────────────────────────────────────────────────────────
 # WEB DASHBOARD
 # ──────────────────────────────────────────────────────────────────────
 web:
-   host: 127.0.0.1 # localhost only; use 0.0.0.0 ONLY behind a firewall/VPN
+   host: 127.0.0.1            # localhost only; 0.0.0.0 ONLY behind a firewall/VPN
    port: 8765
-   # HTTP Basic Auth — REQUIRED if host is anything other than 127.0.0.1.
-   # Leave empty for localhost. Set both when exposing to LAN/cloud:
    auth_user: ""
    auth_pass: ""
 
 # ──────────────────────────────────────────────────────────────────────
-# DATABASE
+# DATABASE / LOGGING
 # ──────────────────────────────────────────────────────────────────────
-# SQLite is the single source of truth for candles, trades, signals, etc.
-# Path is relative to the project root. The parent directory is created
-# automatically if missing.
 database:
    path: data/cero.db
-   echo: false # set true to log every SQL statement (very verbose)
+   echo: false
 
-# ──────────────────────────────────────────────────────────────────────
-# LOGGING
-# ──────────────────────────────────────────────────────────────────────
 logging:
-   level: INFO # DEBUG | INFO | WARNING | ERROR
+   level: INFO                # DEBUG | INFO | WARNING | ERROR
    file: logs/cero.log
    rotate_mb: 50
    keep_files: 5

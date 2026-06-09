@@ -23,7 +23,8 @@ DAY_MS = 86_400_000
 def main() -> None:
     cfg, _ = load_config()
     reb = cfg.momentum.rebalance_days
-    n_uni = len(cfg.momentum.universe)
+    uni_desc = (f"auto top-{cfg.momentum.universe_size} liquid"
+                if cfg.momentum.auto_universe else f"{len(cfg.momentum.universe)} fixed coins")
 
     try:
         con = sqlite3.connect(f"file:{DB}?mode=ro", uri=True)   # read-only
@@ -49,7 +50,7 @@ def main() -> None:
     days_since = int((now.timestamp() * 1000 - last_reb) / DAY_MS) if last_reb else None
 
     print(f"=== Cero momentum — {now:%Y-%m-%d %H:%M} UTC ===\n")
-    print(f"engine: momentum  (long/short, {n_uni}-coin universe, rebalance every {reb}d)")
+    print(f"engine: momentum  (long/short, {uni_desc}, rebalance every {reb}d)")
     print(f"paper equity: {equity:.2f}   ({pct:+.2f}% since start of {start:.0f})")
     print(f"book: {len(longs)} long / {len(shorts)} short    trades logged: {n_trades}")
     if days_since is not None:

@@ -1,11 +1,12 @@
 """In-process momentum engine — the daily long/short paper-portfolio worker.
 
 When `config.engine == 'momentum'`, cero/main.py runs THIS instead of the
-intraday smc_trend pipeline (price worker + per-symbol scheduler + paper broker).
-It wakes every `cfg.momentum.check_hours`, fetches the universe's latest daily
-closes via the (mainnet) exchange client, drives the MomentumBook
-(mark-to-market + rebalance every `cfg.momentum.rebalance_days`), and pushes a
-Telegram notice when it rebalances. Paper only — no real orders, ever.
+intraday smc_trend pipeline. Each cycle (every `cfg.momentum.check_hours`) it:
+  - (if auto_universe) refreshes the universe = the top-N most-liquid perps,
+  - fetches daily closes for the universe PLUS anything currently held,
+  - drives the MomentumBook (mark-to-market + rebalance every rebalance_days),
+  - pushes a Telegram notice on rebalance.
+Paper only — no real orders, ever.
 """
 from __future__ import annotations
 
@@ -15,7 +16,7 @@ from typing import Optional
 
 from loguru import logger
 
-from cero.brain.momentum import MomentumBook, MomentumConfig
+from cero.brain.momentum import MomentumBook, MomentumConfig, read_book
 from cero.config import Config
 from cero.data.exchange import ExchangeClient
 from cero.exec.protocols import Notifier
@@ -27,8 +28,9 @@ class MomentumWorker:
         self.exchange = exchange
         self.notifier = notifier
         m = cfg.momentum
+        self.auto = m.auto_universe
         self.mcfg = MomentumConfig(
-            universe=tuple(m.universe),
+            universe=tuple(m.universe),          # fallback / used when auto is off
             lookbacks=tuple(m.lookbacks),
             frac=m.frac,
             rebalance_days=m.rebalance_days,
@@ -42,10 +44,10 @@ class MomentumWorker:
 
     def start(self) -> None:
         self._task = asyncio.create_task(self._loop(), name="momentum")
-        self._log.info(
-            "momentum engine started — {} coins, rebalance {}d, paper equity {:.0f}",
-            len(self.mcfg.universe), self.mcfg.rebalance_days, self.cfg.momentum.paper_equity,
-        )
+        uni = "auto (top-{} liquid)".format(self.cfg.momentum.universe_size) if self.auto \
+            else f"fixed {len(self.mcfg.universe)} coins"
+        self._log.info("momentum engine started — universe: {}, rebalance {}d, equity {:.0f}",
+                       uni, self.mcfg.rebalance_days, self.cfg.momentum.paper_equity)
 
     async def stop(self) -> None:
         self._stop.set()
@@ -71,10 +73,31 @@ class MomentumWorker:
                 pass
 
     async def _cycle(self) -> None:
-        closes = await self._fetch_closes()
+        # 1. (auto) refresh the universe to the current most-liquid perps
+        if self.auto:
+            try:
+                uni = await self.exchange.top_liquid_perps(
+                    self.cfg.momentum.universe_size, self.cfg.momentum.min_volume_usd)
+                if len(uni) >= 6:
+                    self.mcfg = MomentumConfig(
+                        universe=tuple(uni), lookbacks=self.mcfg.lookbacks,
+                        frac=self.mcfg.frac, rebalance_days=self.mcfg.rebalance_days)
+                    self._log.info("auto-universe: {} liquid perps", len(uni))
+                else:
+                    self._log.warning("auto-universe returned {} — keeping previous", len(uni))
+            except Exception as e:  # noqa: BLE001
+                self._log.warning("universe refresh failed, keeping previous: {}", e)
+
+        # 2. fetch closes for the universe + anything we still hold (so dropped
+        #    coins can be marked + closed cleanly)
+        held = list(read_book(self.book.db_path).get("positions", {}))
+        symbols = list(dict.fromkeys(list(self.mcfg.universe) + held))
+        closes = await self._fetch_closes(symbols)
         if len(closes) < 6:
             self._log.warning("only {} symbols priced — skipping cycle", len(closes))
             return
+
+        # 3. drive the book (marks to market; rebalances only when due)
         summary = self.book.update(closes, int(time.time() * 1000))
         pct = (summary["equity"] / summary["start_equity"] - 1) * 100
         line = (f"[MOM] equity {summary['equity']:.0f} ({pct:+.1f}%) "
@@ -85,14 +108,12 @@ class MomentumWorker:
         if summary["rebalanced"]:
             longs = ", ".join(s.split("/")[0] for s in summary["longs"])
             shorts = ", ".join(s.split("/")[0] for s in summary["shorts"])
-            await self.notifier.send_notice(
-                f"{line}\nLONG: {longs}\nSHORT: {shorts}"
-            )
+            await self.notifier.send_notice(f"{line}\nLONG: {longs}\nSHORT: {shorts}")
 
-    async def _fetch_closes(self) -> dict[str, list[float]]:
+    async def _fetch_closes(self, symbols) -> dict[str, list[float]]:
         need = max(self.mcfg.lookbacks) + 5
         out: dict[str, list[float]] = {}
-        for sym in self.mcfg.universe:
+        for sym in symbols:
             try:
                 candles = await self.exchange.fetch_ohlcv(sym, "1d", limit=need)
                 if candles:

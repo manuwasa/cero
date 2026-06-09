@@ -10,7 +10,7 @@ exchange:
    #   - bybit      (simple, widely used)
    #   - binance    (largest, but US/SG restrictions)
    #   - hyperliquid (on-chain perps)
-   name: bybit
+   name: binance
 
    # Use testnet first. Set to false only when you're certain.
    testnet: true
@@ -87,6 +87,15 @@ primary_strategy: smc_trend
 # smc      — original per-symbol intraday strategy (kept for reference;
 #            no proven edge — don't rely on it).
 engine: momentum
+
+# Momentum engine settings (used when engine: momentum).
+momentum:
+   auto_universe: true        # pick the most-liquid coins automatically (no fixed list)
+   universe_size: 50          # consider the top-N perps by 24h volume
+   min_volume_usd: 20000000   # liquidity floor — ignore coins below $20M/24h
+   # lookbacks: [20, 30, 60]  # momentum windows (ensemble); defaults are fine
+   # rebalance_days: 5
+   # paper_equity: 10000
 
 # ──────────────────────────────────────────────────────────────────────
 # EXECUTION MODE  (only used by the 'smc' engine; momentum is always paper)

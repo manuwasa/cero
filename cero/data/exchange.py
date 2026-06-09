@@ -249,14 +249,19 @@ class ExchangeClient:
         client = self._cls(params)
         if sandbox:
             client.set_sandbox_mode(True)
-        # Bybit's load_markets calls fetchCurrencies → privateGetV5AssetCoinQueryInfo,
-        # which needs the "Wallet" API permission. Cero doesn't need per-coin
-        # deposit/withdraw metadata, so flip the `has` flag off — load_markets
-        # then makes only the public fetchMarkets call. Also limit fetch_markets
-        # to 'linear' (USDT perps) — options endpoints are flaky and unused.
-        if self.exch_cfg.name == "bybit":
+        # fetchCurrencies needs API auth on most venues (binance: sapi; bybit:
+        # Wallet permission). Whenever we DON'T actually have keys (the public
+        # data client, or a keyless order client in paper), disable it so
+        # load_markets is a single clean public call instead of erroring.
+        if not (with_keys and self._secrets.exchange_api_key):
             client.has["fetchCurrencies"] = False
+        # Cero only trades USDT-margined linear perps — load just those, so
+        # load_markets skips spot/inverse/option endpoints: faster and fewer
+        # failure points (notably avoids binance's geo-sensitive spot host).
+        if self.exch_cfg.name in ("bybit", "binance"):
             client.options["fetchMarkets"] = ["linear"]
+        if self.exch_cfg.name == "bybit":
+            client.has["fetchCurrencies"] = False    # bybit's needs Wallet perm even with keys
         return client
 
     # ── lifecycle ─────────────────────────────────────────────────────
@@ -273,15 +278,22 @@ class ExchangeClient:
         Loads both the order client and (if separate) the mainnet data client."""
         if self._markets_loaded:
             return
-        self._install_threaded_resolver(self._ccxt)
-        await _retry(self._ccxt.load_markets, op="load_markets")
+        # Data client = source of truth for prices — MUST load.
+        self._install_threaded_resolver(self._data)
+        await _retry(self._data.load_markets, op="load_markets(data)")
+        # Order client: when separate (e.g. testnet orders + mainnet data), load
+        # it too — but don't let a flaky order venue block data/momentum. Orders
+        # simply stay unavailable until it recovers.
         if self._separate_data:
-            self._install_threaded_resolver(self._data)
-            await _retry(self._data.load_markets, op="load_markets(data)")
+            self._install_threaded_resolver(self._ccxt)
+            try:
+                await _retry(self._ccxt.load_markets, op="load_markets(orders)")
+            except ExchangeError as e:  # noqa: PERF203
+                self._log.warning("order venue markets failed to load ({}) — orders unavailable, data OK", e)
         self._markets_loaded = True
         self._log.info(
-            "connected: {} markets loaded (market data from {})",
-            len(self._ccxt.markets),
+            "connected: {} data markets (market data from {})",
+            len(self._data.markets),
             "mainnet" if (self._separate_data or not self.exch_cfg.testnet) else "testnet",
         )
 
@@ -327,10 +339,13 @@ class ExchangeClient:
     # ── symbol helpers ────────────────────────────────────────────────
 
     def normalize_symbol(self, symbol: str) -> str:
-        """Validate against loaded markets. Pass-through if already unified."""
+        """Validate against the DATA client's markets (the always-required,
+        mainnet source). Symbols match across venues for the perps we trade, so
+        this also covers order calls — and it means a flaky order venue can't
+        break data/momentum."""
         if not self._markets_loaded:
             raise ExchangeError("connect() before using symbols")
-        if symbol in self._ccxt.markets:
+        if symbol in self._data.markets:
             return symbol
         raise ExchangeError(f"unknown symbol {symbol!r} on {self.exch_cfg.name}")
 
@@ -372,6 +387,25 @@ class ExchangeClient:
             ask=float(t.get("ask") or t["last"]),
             ts=int(t.get("timestamp") or 0),
         )
+
+    async def top_liquid_perps(
+        self, n: int = 50, min_quote_volume: float = 0.0, quote: str = "USDT"
+    ) -> list[str]:
+        """Return the `n` most-liquid USDT-margined linear perps by 24h quote
+        volume (from the mainnet data client). Used by the momentum engine's
+        auto-universe so there's no hand-maintained coin list."""
+        tickers = await _retry(self._data.fetch_tickers, op="fetch_tickers")
+        suffix = f"/{quote}:{quote}"
+        rows: list[tuple[str, float]] = []
+        for sym, t in tickers.items():
+            if not sym.endswith(suffix):          # unified linear perp: BASE/USDT:USDT
+                continue
+            qv = t.get("quoteVolume")
+            if qv is None or float(qv) < min_quote_volume:
+                continue
+            rows.append((sym, float(qv)))
+        rows.sort(key=lambda r: -r[1])
+        return [s for s, _ in rows[:n]]
 
     # ── account state (private, needs keys) ───────────────────────────
 

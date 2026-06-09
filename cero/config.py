@@ -150,6 +150,11 @@ class MomentumSettings(BaseModel):
     rebalance_days: int = Field(default=5, ge=1)
     paper_equity: float = Field(default=10_000.0, gt=0)
     check_hours: int = Field(default=6, ge=1, le=48)
+    # Auto-universe: instead of the fixed `universe` list above, pick the most-
+    # liquid perps from the exchange each rebalance (no hand-maintained list).
+    auto_universe: bool = False
+    universe_size: int = Field(default=50, ge=10, le=200)
+    min_volume_usd: float = Field(default=20_000_000.0, ge=0)
 
 
 class Config(BaseModel):

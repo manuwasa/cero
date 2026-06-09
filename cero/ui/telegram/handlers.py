@@ -25,6 +25,7 @@ from aiogram.types import Message
 from loguru import logger
 from sqlalchemy import desc, func, select
 
+from cero.brain.momentum import read_book
 from cero.db.models import Position, Signal as SignalRow, Trade, TripEvent
 from cero.db.session import session_factory
 
@@ -36,6 +37,13 @@ def register(dp: Dispatcher, services: dict, allowed_chat_ids: set[str]) -> None
         return str(msg.from_user.id) in allowed_chat_ids if msg.from_user else False
 
     log = logger.bind(component="telegram.handlers")
+    cfg_obj = services.get("config")
+
+    def momentum_mode() -> bool:
+        return cfg_obj is not None and getattr(cfg_obj, "engine", "smc") == "momentum"
+
+    def reb_days() -> int:
+        return cfg_obj.momentum.rebalance_days if cfg_obj is not None else 5
 
     # ── /start, /help ────────────────────────────────────────────────
 
@@ -55,11 +63,12 @@ def register(dp: Dispatcher, services: dict, allowed_chat_ids: set[str]) -> None
             return
         await msg.reply(
             "<b>Commands</b>\n"
-            "<code>/status     </code> health snapshot\n"
-            "<code>/readiness  </code> latest tier/direction per symbol\n"
-            "<code>/positions  </code> open positions\n"
-            "<code>/pnl        </code> realized PnL stats\n"
-            "<code>/trip       </code> kill switch (cancels orders, closes positions)\n"
+            "<code>/status     </code> health + equity snapshot\n"
+            "<code>/book       </code> current long/short momentum holdings\n"
+            "<code>/pnl        </code> equity + PnL\n"
+            "<code>/positions  </code> current holdings (with sizes)\n"
+            "<code>/readiness  </code> per-symbol view\n"
+            "<code>/trip       </code> kill switch\n"
             "<code>/reset      </code> clear an active TRIP\n"
             "<code>/help       </code> this message"
         )
@@ -70,8 +79,23 @@ def register(dp: Dispatcher, services: dict, allowed_chat_ids: set[str]) -> None
     async def _status(msg: Message) -> None:
         if not authorized(msg):
             return
-        cfg = services.get("config")
         gate = services.get("risk_gate")
+        if momentum_mode():
+            bk = read_book()
+            lines = ["<b>cero status</b> — engine <code>momentum</code> (paper)"]
+            if bk:
+                pct = (bk["equity"] / bk["start_equity"] - 1) * 100 if bk["start_equity"] else 0.0
+                lines.append(f"  equity <code>{bk['equity']:.2f}</code> ({pct:+.2f}%)  book {len(bk['longs'])}L/{len(bk['shorts'])}S")
+                if bk["last_rebalance"]:
+                    days = int((datetime.now(timezone.utc).timestamp() * 1000 - bk["last_rebalance"]) / 86_400_000)
+                    lines.append(f"  last rebalance {days}d ago — next in ~{max(0, reb_days() - days)}d")
+            else:
+                lines.append("  book not started yet — engine hasn't rebalanced")
+            if gate is not None and gate.tripped:
+                lines.append(f"  ⛔ <b>TRIPPED</b>: {gate.trip_reason}")
+            await msg.reply("\n".join(lines))
+            return
+        cfg = services.get("config")
         lines = ["<b>cero status</b>"]
         if cfg is not None:
             lines.append(
@@ -87,11 +111,33 @@ def register(dp: Dispatcher, services: dict, allowed_chat_ids: set[str]) -> None
                 lines.append("  ✅ not tripped")
         await msg.reply("\n".join(lines))
 
+    # ── /book (momentum holdings) ────────────────────────────────────
+
+    @dp.message(Command("book"))
+    async def _book(msg: Message) -> None:
+        if not authorized(msg):
+            return
+        bk = read_book()
+        if not bk:
+            await msg.reply("no momentum book yet — the engine hasn't rebalanced.")
+            return
+        pct = (bk["equity"] / bk["start_equity"] - 1) * 100 if bk["start_equity"] else 0.0
+        longs = ", ".join(x.split("/")[0] for x in bk["longs"]) or "—"
+        shorts = ", ".join(x.split("/")[0] for x in bk["shorts"]) or "—"
+        await msg.reply(
+            f"<b>momentum book</b>  equity <code>{bk['equity']:.2f}</code> ({pct:+.2f}%)\n"
+            f"<b>LONG</b> ({len(bk['longs'])}): {longs}\n"
+            f"<b>SHORT</b> ({len(bk['shorts'])}): {shorts}"
+        )
+
     # ── /readiness ───────────────────────────────────────────────────
 
     @dp.message(Command("readiness"))
     async def _readiness(msg: Message) -> None:
         if not authorized(msg):
+            return
+        if momentum_mode():
+            await msg.reply("momentum engine — no per-symbol tiers. Use /book for the current long/short holdings.")
             return
         cfg = services.get("config")
         symbols = cfg.symbols if cfg is not None else None
@@ -134,6 +180,18 @@ def register(dp: Dispatcher, services: dict, allowed_chat_ids: set[str]) -> None
     async def _positions(msg: Message) -> None:
         if not authorized(msg):
             return
+        if momentum_mode():
+            bk = read_book()
+            if not bk or not bk["positions"]:
+                await msg.reply("no momentum positions yet.")
+                return
+            lines = ["<b>momentum positions</b>"]
+            for sym in sorted(bk["positions"]):
+                sz, lp = bk["positions"][sym]
+                lines.append(f"  <code>{sym.split('/')[0]}</code>  {'long' if sz > 0 else 'short'}  "
+                             f"size {sz:+.4f}  @ {lp:.4f}")
+            await msg.reply("\n".join(lines))
+            return
         async with session_factory()() as s:
             rows = (await s.execute(select(Position).order_by(Position.symbol))).scalars().all()
         if not rows:
@@ -152,6 +210,19 @@ def register(dp: Dispatcher, services: dict, allowed_chat_ids: set[str]) -> None
     @dp.message(Command("pnl"))
     async def _pnl(msg: Message) -> None:
         if not authorized(msg):
+            return
+        if momentum_mode():
+            bk = read_book()
+            if not bk:
+                await msg.reply("no momentum book yet.")
+                return
+            pct = (bk["equity"] / bk["start_equity"] - 1) * 100 if bk["start_equity"] else 0.0
+            await msg.reply(
+                "<b>PnL</b> (momentum, paper)\n"
+                f"  equity: <code>{bk['equity']:.2f}</code>  "
+                f"({pct:+.2f}% since {bk['start_equity']:.0f})\n"
+                f"  rebalance trades logged: {bk['n_trades']}"
+            )
             return
         now_ms = int(datetime.now(timezone.utc).timestamp() * 1000)
         day_start = now_ms - (now_ms % 86_400_000)

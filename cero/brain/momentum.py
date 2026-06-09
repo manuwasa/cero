@@ -17,6 +17,7 @@ the ensemble, rebalance ~5d, and validate forward in paper before real money.
 """
 from __future__ import annotations
 
+import os
 import sqlite3
 from dataclasses import dataclass, field
 
@@ -154,6 +155,32 @@ class MomentumBook:
         return {"equity": equity, "start_equity": start_eq, "day_pnl": day_pnl,
                 "rebalanced": rebalanced, "last_rebalance": last_reb,
                 "longs": longs, "shorts": shorts, "n_priced": len(prices)}
+
+
+def read_book(db_path: str = "data/momentum_paper.db") -> dict:
+    """Read-only snapshot of the paper book for UI / Telegram. No writes, no
+    network — safe to call while the engine is running. Returns {} if no book."""
+    if not os.path.exists(db_path):
+        return {}
+    con = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
+    try:
+        st = con.execute("SELECT equity, last_rebalance, start_equity FROM mom_state WHERE id=1").fetchone()
+        if not st:
+            return {}
+        equity, last_reb, start_eq = st
+        pos = con.execute("SELECT symbol, size, last_price FROM mom_positions").fetchall()
+        n_trades = con.execute("SELECT COUNT(*) FROM mom_trades").fetchone()[0]
+    except sqlite3.OperationalError:
+        return {}
+    finally:
+        con.close()
+    return {
+        "equity": equity, "start_equity": start_eq, "last_rebalance": last_reb,
+        "n_trades": n_trades,
+        "longs": sorted(s for s, sz, _ in pos if sz > 0),
+        "shorts": sorted(s for s, sz, _ in pos if sz < 0),
+        "positions": {s: (sz, lp) for s, sz, lp in pos},
+    }
 
 
 # ── quick self-test / inspection: show today's target book from a DB ──────

@@ -22,8 +22,9 @@ exchange:
    market_data_testnet: false
 
    # Chart-data source — can be a DIFFERENT exchange than `name` (your trading
-   # venue). Trading targets binance; candles come from bybit (reachable, and the
-   # momentum edge was validated on it). Public data, no keys. Set null to use `name`.
+   # venue). Trading targets binance; candles come from bybit (crypto-only perps
+   # = clean auto-universe, no tokenized stocks; validated). Public data, no keys.
+   # Set null to use `name`. (okx works too but mixes in tokenized stocks/gold.)
    data_exchange: bybit
 
    # Margin mode for perps. Options: isolated | cross

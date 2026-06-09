@@ -40,6 +40,11 @@ class ExchangeConfig(BaseModel):
     # (fantasy wicks, frozen feeds) and corrupts the brain. Orders still route to
     # whatever `testnet` selects. Set True only to force data from the order venue.
     market_data_testnet: bool = False
+    # Chart-data source. Defaults to `name`. Set to a DIFFERENT exchange to pull
+    # candles from there while trading on `name` — e.g. orders on binance but
+    # data from bybit if binance is geo-restricted where Cero runs. Public data,
+    # no keys needed.
+    data_exchange: ExchangeName | None = None
     margin_mode: MarginMode = "isolated"
     leverage: int = Field(default=5, ge=1, le=100)
 

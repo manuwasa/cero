@@ -200,22 +200,26 @@ class ExchangeClient:
         self.exch_cfg: ExchangeConfig = cfg.exchange
         self._secrets = secrets
 
-        cls = getattr(ccxtpro, self.exch_cfg.name, None)
-        if cls is None:
-            raise ExchangeError(
-                f"ccxt has no async/pro support for exchange '{self.exch_cfg.name}'"
-            )
+        self._order_name = self.exch_cfg.name
+        order_cls = getattr(ccxtpro, self._order_name, None)
+        if order_cls is None:
+            raise ExchangeError(f"ccxt has no async/pro support for '{self._order_name}'")
+        # Chart data can come from a DIFFERENT exchange than the order venue
+        # (e.g. trade on binance, pull candles from bybit if binance is blocked).
+        self._data_name = self.exch_cfg.data_exchange or self._order_name
+        data_cls = getattr(ccxtpro, self._data_name, None)
+        if data_cls is None:
+            raise ExchangeError(f"ccxt has no async/pro support for data_exchange '{self._data_name}'")
 
-        self._cls = cls
-        # Two ccxt clients, one job each:
-        #   _ccxt — orders + account (private). Sandboxed iff testnet.
-        #   _data — market data (public candles/ticker). Pulled from MAINNET even
-        #           when trading on testnet, because testnet OHLCV is garbage
-        #           (fantasy wicks, frozen feeds) that would poison the brain.
-        # When data and orders share the same venue, one client is reused.
-        self._ccxt = self._build_client(sandbox=self.exch_cfg.testnet, with_keys=True)
-        if self.exch_cfg.testnet and not self.exch_cfg.market_data_testnet:
-            self._data = self._build_client(sandbox=False, with_keys=False)
+        # Two ccxt clients:
+        #   _ccxt — orders + account (private), the trading venue, sandboxed iff testnet.
+        #   _data — public mainnet candles/tickers (the brain's price feed).
+        self._ccxt = self._build_client(self._order_name, order_cls,
+                                        sandbox=self.exch_cfg.testnet, with_keys=True)
+        need_separate = (self._data_name != self._order_name) or \
+            (self.exch_cfg.testnet and not self.exch_cfg.market_data_testnet)
+        if need_separate:
+            self._data = self._build_client(self._data_name, data_cls, sandbox=False, with_keys=False)
             self._separate_data = True
         else:
             self._data = self._ccxt
@@ -223,21 +227,18 @@ class ExchangeClient:
 
         self._markets_loaded = False
         self._log = logger.bind(
-            exchange=self.exch_cfg.name,
-            testnet=self.exch_cfg.testnet,
-            data="mainnet" if (self._separate_data or not self.exch_cfg.testnet) else "testnet",
+            exchange=self._order_name, data=self._data_name, testnet=self.exch_cfg.testnet,
         )
 
     # ── client construction ───────────────────────────────────────────
 
-    def _build_client(self, *, sandbox: bool, with_keys: bool):
-        """Construct one ccxt.pro client. `sandbox` selects testnet endpoints;
-        `with_keys` attaches API credentials (only the private order/account
-        client needs them — the public mainnet data client must NOT, since
-        testnet keys are invalid on mainnet)."""
+    def _build_client(self, ex_name: str, cls, *, sandbox: bool, with_keys: bool):
+        """Construct one ccxt.pro client for exchange `ex_name`. `sandbox` selects
+        testnet endpoints; `with_keys` attaches API credentials (only the private
+        order/account client needs them — the public data client must NOT)."""
         params: dict[str, Any] = {
             "enableRateLimit": True,
-            # Bybit (and most perp exchanges) use 'swap' for USDT-margined perps.
+            # Most perp exchanges use 'swap' for USDT-margined perps.
             "options": {"defaultType": "swap"},
         }
         if with_keys and self._secrets.exchange_api_key:
@@ -246,7 +247,7 @@ class ExchangeClient:
             if self._secrets.exchange_passphrase:
                 params["password"] = self._secrets.exchange_passphrase
 
-        client = self._cls(params)
+        client = cls(params)
         if sandbox:
             client.set_sandbox_mode(True)
         # fetchCurrencies needs API auth on most venues (binance: sapi; bybit:
@@ -258,9 +259,9 @@ class ExchangeClient:
         # Cero only trades USDT-margined linear perps — load just those, so
         # load_markets skips spot/inverse/option endpoints: faster and fewer
         # failure points (notably avoids binance's geo-sensitive spot host).
-        if self.exch_cfg.name in ("bybit", "binance"):
+        if ex_name in ("bybit", "binance"):
             client.options["fetchMarkets"] = ["linear"]
-        if self.exch_cfg.name == "bybit":
+        if ex_name == "bybit":
             client.has["fetchCurrencies"] = False    # bybit's needs Wallet perm even with keys
         return client
 
@@ -292,9 +293,8 @@ class ExchangeClient:
                 self._log.warning("order venue markets failed to load ({}) — orders unavailable, data OK", e)
         self._markets_loaded = True
         self._log.info(
-            "connected: {} data markets (market data from {})",
-            len(self._data.markets),
-            "mainnet" if (self._separate_data or not self.exch_cfg.testnet) else "testnet",
+            "connected: {} data markets — data from {}, orders via {}",
+            len(self._data.markets), self._data_name, self._order_name,
         )
 
     def _install_threaded_resolver(self, client) -> None:

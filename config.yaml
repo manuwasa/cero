@@ -21,6 +21,11 @@ exchange:
    # and corrupts every signal. Orders still follow `testnet` above.
    market_data_testnet: false
 
+   # Chart-data source — can be a DIFFERENT exchange than `name` (your trading
+   # venue). Trading targets binance; candles come from bybit (reachable, and the
+   # momentum edge was validated on it). Public data, no keys. Set null to use `name`.
+   data_exchange: bybit
+
    # Margin mode for perps. Options: isolated | cross
    # isolated: per-position margin; safer per-trade
    # cross:    shared margin pool; lower margin requirement, higher blow-up risk

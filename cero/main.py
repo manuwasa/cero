@@ -125,7 +125,8 @@ class Cero:
         await self.risk_gate.hydrate()
 
         # 4. Notifier — Telegram if creds present, log fallback otherwise
-        services = {"config": cfg, "risk_gate": self.risk_gate}
+        #    (exchange is exposed so /review can fetch the BTC benchmark live)
+        services = {"config": cfg, "risk_gate": self.risk_gate, "exchange": self.exchange}
         tg = build_notifier(
             secrets.telegram_bot_token, secrets.telegram_chat_id,
             services=services, backup_chat_id=secrets.telegram_chat_id_2,
@@ -144,7 +145,7 @@ class Cero:
         # the intraday smc pipeline. Skips price worker / scheduler / paper broker;
         # keeps the dashboard + notifier. (smc code stays in the repo, just unused.)
         if cfg.engine == "momentum":
-            self.momentum_worker = MomentumWorker(cfg, self.exchange, self.notifier)
+            self.momentum_worker = MomentumWorker(cfg, self.exchange, self.notifier, self.risk_gate)
             self.momentum_worker.start()
             app = build_app(cfg, self.risk_gate, exchange=self.exchange)
             uconfig = uvicorn.Config(

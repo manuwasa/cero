@@ -160,6 +160,14 @@ class MomentumSettings(BaseModel):
     auto_universe: bool = False
     universe_size: int = Field(default=50, ge=10, le=200)
     min_volume_usd: float = Field(default=20_000_000.0, ge=0)
+    # ── risk overlay (turns the raw signal into a book that survives a crash) ──
+    gross_per_side: float = Field(default=1.0, gt=0, le=3.0)       # base notional/side ×equity
+    weighting: Literal["inverse_vol", "equal"] = "inverse_vol"      # risk parity vs raw v1
+    vol_window: int = Field(default=30, ge=5, le=120)              # days for vol estimates
+    target_vol: float = Field(default=0.25, ge=0.0, le=2.0)        # target annual book vol; 0=off
+    max_gross_per_side: float = Field(default=1.0, gt=0, le=5.0)   # leverage cap (anti-blowup)
+    daily_loss_halt_pct: float = Field(default=8.0, ge=0, le=50)   # flatten+halt on a cycle loss; 0=off
+    drawdown_halt_pct: float = Field(default=15.0, ge=0, le=80)    # flatten+halt below peak; 0=off
 
 
 class Config(BaseModel):

@@ -25,7 +25,7 @@ from aiogram.types import Message
 from loguru import logger
 from sqlalchemy import desc, func, select
 
-from cero.brain.momentum import read_book
+from cero.brain.momentum import read_book, review_book
 from cero.db.models import Position, Signal as SignalRow, Trade, TripEvent
 from cero.db.session import session_factory
 
@@ -71,6 +71,7 @@ def register(dp: Dispatcher, services: dict, allowed_chat_ids: set[str]) -> None
         await msg.reply(
             "<b>Commands</b>\n"
             "<code>/status     </code> health + equity snapshot\n"
+            "<code>/review     </code> performance review (return, drawdown, vs BTC)\n"
             "<code>/book       </code> current long/short momentum holdings\n"
             "<code>/pnl        </code> equity + PnL\n"
             "<code>/positions  </code> current holdings (with sizes)\n"
@@ -141,6 +142,54 @@ def register(dp: Dispatcher, services: dict, allowed_chat_ids: set[str]) -> None
             f"<b>LONG</b> ({len(bk['longs'])}): {longs}\n"
             f"<b>SHORT</b> ({len(bk['shorts'])}): {shorts}"
         )
+
+    # ── /review (performance review: return, drawdown, vs BTC) ────────
+
+    @dp.message(Command("review"))
+    async def _review(msg: Message) -> None:
+        if not authorized(msg):
+            return
+        if not momentum_mode():
+            await msg.reply("/review is for the momentum engine.")
+            return
+        log_path = cfg_obj.logging.file if cfg_obj is not None else "logs/cero.log"
+        r = review_book(log_path=log_path)
+        if not r:
+            await msg.reply("no momentum book yet — the engine hasn't run a cycle.")
+            return
+
+        lines = ["<b>momentum review</b> (paper)"]
+        if r["has_curve"]:
+            lines.append(f"  window: {r['span_days']:.1f}d, {r['n_cycles']} cycles, {r['n_rebalances']} rebalances")
+            lines.append(f"  equity <code>{r['equity']:.2f}</code> (start {r['start']:.0f}) → <b>{r['total_ret'] * 100:+.2f}%</b>")
+            lines.append(f"  peak {r['peak'][0]:.0f} · trough {r['trough'][0]:.0f}")
+            lines.append(f"  max drawdown <b>{r['max_drawdown'] * 100:+.1f}%</b> · cycle vol {r['cycle_vol'] * 100:.2f}%")
+            lines.append(f"  turnover {r['turnover_x']:.1f}× over {r['n_fills']} fills")
+            lines.append(f"  <code>{r['sparkline']}</code>")
+        else:
+            lines.append(f"  equity <code>{r['equity']:.2f}</code> → <b>{r['total_ret'] * 100:+.2f}%</b> (no curve in log yet)")
+
+        # BTC benchmark via the already-connected exchange (best-effort)
+        ex = services.get("exchange")
+        span = r.get("span_days", 0.0)
+        if ex is not None and span >= 0.5:
+            days = max(1, round(span))
+            try:
+                candles = await ex.fetch_ohlcv("BTC/USDT:USDT", "1d", limit=days + 3)
+                closes = [c.close for c in candles]
+                if len(closes) >= 2:
+                    w = closes[-(days + 1):] if days + 1 <= len(closes) else closes
+                    bench = w[-1] / w[0] - 1
+                    gap = (r["total_ret"] - bench) * 100
+                    verb = "beat" if gap >= 0 else "lagged"
+                    lines.append(f"  vs hold BTC ~{days}d: {bench * 100:+.2f}% → <b>{verb}</b> by {abs(gap):.1f} pts")
+            except Exception:  # noqa: BLE001 — benchmark is optional, never break /review
+                pass
+
+        lines.append(f"  book {r['n_longs']}L/{r['n_shorts']}S")
+        if span < 14:
+            lines.append(f"  <i>⚠ {span:.0f}d is noise — sanity check, not a verdict.</i>")
+        await msg.reply("\n".join(lines))
 
     # ── /readiness ───────────────────────────────────────────────────
 

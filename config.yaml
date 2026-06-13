@@ -40,10 +40,25 @@ momentum:
    # rebalance_days: 5
    # paper_equity: 10000
 
+   # ── risk overlay — turns the raw signal into a book that survives a crash ──
+   # (This is the protection layer. Defaults are conservative; built for real money.)
+   weighting: inverse_vol     # inverse_vol = risk parity: calm coins get BIGGER
+                              #   positions than wild ones, so no micro-cap dominates
+                              #   risk. 'equal' = raw v1 (what caused the -7% day).
+   target_vol: 0.25           # scale the whole book toward this annual vol — auto
+                              #   de-levers in a storm. 0 = off.
+   max_gross_per_side: 1.0    # leverage cap: vol targeting NEVER exceeds this (anti-blowup)
+   daily_loss_halt_pct: 8     # circuit breaker: flatten to cash + HALT if a cycle loses this %
+   drawdown_halt_pct: 15      # circuit breaker: flatten to cash + HALT if this % below peak
+   # gross_per_side: 1.0      # base notional per side (×equity)
+   # vol_window: 30           # days of history for vol estimates
+   # A halt stays in force until you send /reset in Telegram. /trip flattens it too.
+
 # ──────────────────────────────────────────────────────────────────────
 # RISK MANAGEMENT
-#   Used by the smc engine and the manual /trip kill-switch. Momentum is
-#   market-neutral and doesn't size off these yet.
+#   The momentum engine has its OWN risk overlay (see `momentum:` above):
+#   inverse-vol sizing, volatility targeting, and a circuit breaker. The
+#   settings below drive the smc engine and the manual /trip kill-switch.
 # ──────────────────────────────────────────────────────────────────────
 risk:
    base_risk_per_trade_pct: 0.5

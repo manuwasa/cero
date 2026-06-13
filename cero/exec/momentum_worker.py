@@ -12,7 +12,8 @@ from __future__ import annotations
 
 import asyncio
 import time
-from typing import Optional
+from dataclasses import replace
+from typing import TYPE_CHECKING, Optional
 
 from loguru import logger
 
@@ -21,12 +22,17 @@ from cero.config import Config
 from cero.data.exchange import ExchangeClient
 from cero.exec.protocols import Notifier
 
+if TYPE_CHECKING:
+    from cero.brain.risk import RiskGate
+
 
 class MomentumWorker:
-    def __init__(self, cfg: Config, exchange: ExchangeClient, notifier: Notifier) -> None:
+    def __init__(self, cfg: Config, exchange: ExchangeClient, notifier: Notifier,
+                 risk_gate: "Optional[RiskGate]" = None) -> None:
         self.cfg = cfg
         self.exchange = exchange
         self.notifier = notifier
+        self.risk_gate = risk_gate
         m = cfg.momentum
         self.auto = m.auto_universe
         self.mcfg = MomentumConfig(
@@ -34,6 +40,13 @@ class MomentumWorker:
             lookbacks=tuple(m.lookbacks),
             frac=m.frac,
             rebalance_days=m.rebalance_days,
+            gross_per_side=m.gross_per_side,
+            weighting=m.weighting,
+            vol_window=m.vol_window,
+            target_vol=m.target_vol,
+            max_gross_per_side=m.max_gross_per_side,
+            daily_loss_halt_pct=m.daily_loss_halt_pct,
+            drawdown_halt_pct=m.drawdown_halt_pct,
         )
         self.book = MomentumBook(self.mcfg, db_path="data/momentum_paper.db",
                                  start_equity=m.paper_equity)
@@ -79,9 +92,7 @@ class MomentumWorker:
                 uni = await self.exchange.top_liquid_perps(
                     self.cfg.momentum.universe_size, self.cfg.momentum.min_volume_usd)
                 if len(uni) >= 6:
-                    self.mcfg = MomentumConfig(
-                        universe=tuple(uni), lookbacks=self.mcfg.lookbacks,
-                        frac=self.mcfg.frac, rebalance_days=self.mcfg.rebalance_days)
+                    self.mcfg = replace(self.mcfg, universe=tuple(uni))  # keep risk overlay
                     self._log.info("auto-universe: {} liquid perps", len(uni))
                 else:
                     self._log.warning("auto-universe returned {} — keeping previous", len(uni))
@@ -97,15 +108,38 @@ class MomentumWorker:
             self._log.warning("only {} symbols priced — skipping cycle", len(closes))
             return
 
-        # 3. drive the book (marks to market; rebalances only when due)
-        summary = self.book.update(closes, int(time.time() * 1000))
+        # 3. drive the book: mark to market, apply the risk gate (kill switch +
+        #    circuit breaker → flatten to cash), rebalance only when due & healthy.
+        external_halt = bool(self.risk_gate and self.risk_gate.tripped)
+        summary = self.book.update(closes, int(time.time() * 1000), external_halt=external_halt)
         pct = (summary["equity"] / summary["start_equity"] - 1) * 100
+        tag = ("  FLATTENED" if summary["flattened"]
+               else "  REBALANCED" if summary["rebalanced"]
+               else "  HALTED" if summary["halt_reason"] else "")
         line = (f"[MOM] equity {summary['equity']:.0f} ({pct:+.1f}%) "
                 f"day {summary['day_pnl']:+.0f} | "
-                f"{len(summary['longs'])}L/{len(summary['shorts'])}S"
-                + ("  REBALANCED" if summary["rebalanced"] else ""))
+                f"{len(summary['longs'])}L/{len(summary['shorts'])}S{tag}")
         self._log.info(line)
-        if summary["rebalanced"]:
+
+        reason = summary["halt_reason"]
+        if reason and not external_halt:
+            # circuit-breaker breach → trip the gate so it STAYS halted until the
+            # user /reset's, then shout. This is the loss-containment kill.
+            self._log.warning("[MOM] circuit breaker tripped: {}", reason)
+            if self.risk_gate is not None:
+                try:
+                    await self.risk_gate.trip("circuit_breaker", reason)
+                except Exception as e:  # noqa: BLE001
+                    self._log.warning("could not trip risk gate: {}", e)
+            await self.notifier.send_notice(
+                f"🛑 CIRCUIT BREAKER — {reason}\n"
+                f"equity {summary['equity']:.0f} ({pct:+.1f}%). Book flattened to cash, "
+                f"trading halted. Send /reset to resume.")
+        elif summary["flattened"] and external_halt:
+            await self.notifier.send_notice(
+                f"🛑 kill switch active — momentum book flattened to cash "
+                f"({summary['equity']:.0f}). Send /reset to resume.")
+        elif summary["rebalanced"]:
             longs = ", ".join(s.split("/")[0] for s in summary["longs"])
             shorts = ", ".join(s.split("/")[0] for s in summary["shorts"])
             await self.notifier.send_notice(f"{line}\nLONG: {longs}\nSHORT: {shorts}")
